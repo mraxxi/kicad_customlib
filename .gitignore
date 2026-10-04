@@ -1,0 +1,27 @@
+# Staging and scratchpads
+staging-temp/
+lib-import/
+
+# Python cache & virtual environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# KiCad temporary, autosave, and backup files
+*.kicad_prl
+*.kicad_dru
+*-save.kicad_sch
+*-save.kicad_pcb
+*.bak
+_autosave-*
+*.tmp
+fp-info-cache
+
+# Desktop & OS metadata
+.directory
+.DS_Store
+Thumbs.db

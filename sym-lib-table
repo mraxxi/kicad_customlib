@@ -1,0 +1,5 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "3255") (type "KiCad") (uri "${KICAD_CUSTOM_LIB}/symbols/3255.kicad_symdir") (options "") (descr "Custom symbol library 3255"))
+	(lib (name "TI-TPAxxx_AUDIO-AMP") (type "KiCad") (uri "${KICAD_CUSTOM_LIB}/symbols/TI-TPAxxx_AUDIO-AMP.kicad_symdir") (options "") (descr "Custom symbol library TI-TPAxxx_AUDIO-AMP"))
+)
