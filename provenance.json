@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "items": {
+    "TPAxxxx_TI-AUDIO-AMP/footprint/SOP63P810X120-44N": {
+      "original_name": "SOP63P810X120-44N.kicad_mod",
+      "imported": "2026-10-04"
+    },
+    "TPAxxxx_TI-AUDIO-AMP/model/SOP63P810X120-44N.step": {
+      "original_name": "TPA3255DDV.step",
+      "imported": "2026-10-04"
+    },
+    "TPAxxxx_TI-AUDIO-AMP/symbol/TPA3255DDV": {
+      "original_name": "TPA3255DDV.kicad_sym",
+      "imported": "2026-10-04"
+    }
+  }
+}

@@ -1,3 +1,4 @@
 (fp_lib_table
 	(version 7)
+	(lib (name "TPAxxxx_TI-AUDIO-AMP") (type "KiCad") (uri "${KICAD_CUSTOM_LIB}/footprints/TPAxxxx_TI-AUDIO-AMP.pretty") (options "") (descr "Custom footprint library TPAxxxx_TI-AUDIO-AMP"))
 )
