@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The library is synced between Linux and Windows/macOS, so the path
+        # and line-ending handling has to be exercised on all three.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dev dependencies
+        run: python -m pip install --upgrade pip -r requirements-dev.txt
+
+      - name: Run the test suite
+        # KiCad is not installed on the runners, so the tests that read
+        # /usr/share/kicad or shell out to kicad-cli skip themselves. There is
+        # no display either, so the Tk tests skip too.
+        run: python -m pytest -q
+
+      - name: Audit the library
+        # Exits non-zero if anything is genuinely broken: a stale committed
+        # table, a dangling footprint reference, a non-portable model path, a
+        # derived symbol with no parent, a case collision. Empty categories and
+        # official-nickname shadowing are warnings and do not fail the build.
+        run: python scripts/lib_manager.py check --no-kicad-cli
+
+  line-endings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject CRLF in KiCad text sources
+        # .gitattributes enforces LF; this catches a file committed before it
+        # applied, which would churn the whole file on the other machine.
+        run: |
+          found=$(git ls-files -z -- '*.kicad_sym' '*.kicad_mod' '*.kicad_sch' \
+                    '*.kicad_pcb' 'sym-lib-table' 'fp-lib-table' \
+                  | xargs -0 -r grep -lI $'\r' || true)
+          if [ -n "$found" ]; then
+            echo "These files contain CRLF line endings:"
+            echo "$found"
+            exit 1
+          fi
+          echo "No CRLF found."

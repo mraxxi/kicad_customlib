@@ -1,114 +1,250 @@
 # KiCad Custom Library (`KICAD_CUSTOM_LIB`)
 
-A centralized, portable custom component library and automation suite for KiCad 10+.
+A portable custom component library for KiCad 10 — symbols, footprints and 3D
+models — plus a stdlib-only Python tool that imports vendor downloads, keeps
+every cross-reference correct, and exports lean per-project bundles.
 
 ---
 
-## Features
-- **Single-Import Architecture**: Includes all custom symbols, footprints, and 3D models into any project via a single master table reference.
-- **Cross-Platform Sync**: Zero hardcoded absolute paths — everything uses the standardized `${KICAD_CUSTOM_LIB}` environment variable.
-- **Intelligent Staging & Ingestion**: Drop raw part downloads (ZIP or folders) into `staging-temp/` or use the CLI/GUI to automatically route files to `symbols/`, `footprints/`, and `3dmodels/`.
-- **Database & History Tracking (`manifest.json`)**: Keeps a permanent record of original component names, sources, import dates, and rename/reorganize history.
-- **Lean Project Packager**: Export *only* the specific components used in a given project into a self-contained local folder for clean GitHub distribution without library bloat.
-- **Dual CLI & GUI**: Manage the library with either an interactive desktop app (`python scripts/lib_manager.py`) or headless script commands.
+## Why it is built this way
+
+**The disk is the source of truth.** There is no parts database. The tool
+scans the three directory trees and derives every relationship from the files
+themselves: a symbol points at a footprint through its `Footprint` property, a
+footprint points at its 3D models through their `(model …)` paths. Nothing can
+drift out of sync with a database, because there is no database to drift from.
+
+**Plan, then apply.** Nothing is written directly. Every operation first
+builds a plan — which files will be created, which references rewritten, what
+will break — and shows it to you. Only then does it run. `--dry-run` stops at
+the plan; without `--yes` you are asked first.
 
 ---
 
-## Repository Layout
+## Layout
 
 ```
 KICAD_CUSTOM_LIB/
-├── sym-lib-table               # Master symbol library table
-├── fp-lib-table                # Master footprint library table
-├── manifest.json               # Database of components, metadata, and history
-├── symbols/                    # Symbol libraries (*.kicad_symdir directories)
-│   └── TI-TPAxxx_AUDIO-AMP.kicad_symdir/
-├── footprints/                 # Footprint libraries (*.pretty directories)
-│   └── TI-TPAxxx_AUDIO-AMP.pretty/
-├── 3dmodels/                   # 3D STEP / WRL models (*.3dshapes directories)
-│   └── TI-TPAxxx_AUDIO-AMP.3dshapes/
-├── template/                   # KiCad project templates and page layouts (*.kicad_wks)
-├── staging-temp/               # Scratchpad intake folder (ignored by Git)
-│   ├── intake/                 # Drop new parts here for batch processing
-│   └── imported_archive/       # Local archive of raw downloads
-└── scripts/
-    ├── lib_manager.py          # Unified CLI / GUI launcher
-    └── src/                    # Python core engine and Tkinter GUI
+├── sym-lib-table               # master symbol table   (generated)
+├── fp-lib-table                # master footprint table (generated)
+├── provenance.json             # where each file came from (advisory)
+├── symbols/
+│   └── <Category>.kicad_symdir/<Symbol>.kicad_sym
+├── footprints/
+│   └── <Category>.pretty/<Footprint>.kicad_mod
+├── 3dmodels/
+│   └── <Category>.3dshapes/<Model>.step
+├── template/                   # project templates, page layouts
+├── staging-temp/               # local scratchpad, not in git
+│   ├── intake/<Category>/      # drop downloads here for batch import
+│   └── imported_archive/       # processed items land here
+├── scripts/
+│   ├── lib_manager.py          # the CLI and GUI entry point
+│   └── src/{core,gui}/
+└── tests/
 ```
+
+A category's three directories always share one base name. A directory only
+exists once it holds a file — git cannot track an empty directory, so an empty
+category would exist on one machine and not the other.
 
 ---
 
-## Quickstart: Setup on a New Machine
+## Setup on a new machine
 
-### 1. Clone the Library
+### 1. Clone
 ```bash
 git clone https://github.com/mraxxi/kicad_customlib.git /path/to/KICAD_CUSTOM_LIB
 ```
 
-### 2. Configure Path Variable in KiCad
-1. Open KiCad.
-2. Go to **Preferences** -> **Configure Paths...**
-3. Add a new variable:
-   - **Name**: `KICAD_CUSTOM_LIB`
-   - **Path**: `/path/to/KICAD_CUSTOM_LIB` (absolute path to this folder).
+### 2. Tell KiCad where it is
+**Preferences → Configure Paths…** → add:
 
-### 3. Add Master Tables to Global Libraries
-1. In KiCad, go to **Preferences** -> **Manage Symbol Libraries...**
-   - In the **Global Libraries** tab, click the folder icon to add a library.
-   - Select `sym-lib-table` inside `KICAD_CUSTOM_LIB/`.
-   - Set Library Format to `Table` (or let KiCad detect it).
-2. Go to **Preferences** -> **Manage Footprint Libraries...**
-   - In the **Global Libraries** tab, add `fp-lib-table` inside `KICAD_CUSTOM_LIB/` (Format: `Table`).
+| Name | Path |
+|---|---|
+| `KICAD_CUSTOM_LIB` | the absolute path to this folder |
 
-*Done! All current and future custom components will automatically appear in your KiCad projects.*
+Every path inside the library is written relative to this variable, which is
+why the repository works unchanged on Linux, Windows and macOS.
 
----
+### 3. Register the master tables
+* **Preferences → Manage Symbol Libraries… → Global Libraries** — add
+  `KICAD_CUSTOM_LIB/sym-lib-table`.
+* **Preferences → Manage Footprint Libraries… → Global Libraries** — add
+  `KICAD_CUSTOM_LIB/fp-lib-table`.
 
-## Using the Library Manager
-
-### Launching the GUI
-```bash
-python scripts/lib_manager.py
-```
-
-### Command Line Interface (CLI)
-
-#### 1. Ingest a New Component from ZIP or Folder
-```bash
-python scripts/lib_manager.py ingest /path/to/downloaded_part.zip --category TI-TPAxxx_AUDIO-AMP --part TPA3155DDV
-```
-
-#### 2. Process all parts dropped in `staging-temp/intake/`
-```bash
-python scripts/lib_manager.py sync-staging
-```
-
-#### 3. Move / Reorganize a Part into a New Category
-```bash
-python scripts/lib_manager.py move --part TPA3255 --to TI-TPAxxx_AUDIO-AMP
-```
-
-#### 4. Regenerate Master Tables
-```bash
-python scripts/lib_manager.py generate
-```
-
-#### 5. Audit Library Health (Missing 3D models, unlinked footprints)
+### 4. Check it over
 ```bash
 python scripts/lib_manager.py check
 ```
+Exits non-zero if anything is actually broken, and tells you how to fix each
+finding.
 
-#### 6. Export / Package a Self-Contained Project Library
+### After pulling on the other machine
 ```bash
-python scripts/lib_manager.py package /path/to/my_project --out /path/to/my_project/project_libs
+python scripts/lib_manager.py check
+```
+If it reports `table-stale`, someone committed library files without
+regenerating the tables:
+```bash
+python scripts/lib_manager.py generate --yes
 ```
 
 ---
 
-## Adding 3D Model Offsets
-To adjust 3D alignment permanently:
-1. Open KiCad **Footprint Editor**.
-2. Open the custom footprint (e.g., `TI-TPAxxx_AUDIO-AMP:SOP63P810X120-44N`).
-3. Press `E` (Properties) -> **3D Models** tab.
-4. Adjust Offset (X/Y/Z) and Rotation until the model aligns with pads.
-5. Save. The offset is stored in the `.kicad_mod` file and will automatically apply anywhere this footprint is used.
+## Everyday use
+
+### See what is in there
+```bash
+python scripts/lib_manager.py list          # category totals
+python scripts/lib_manager.py list -v       # every item and its references
+```
+
+### Import a vendor download
+Works with a ZIP, a folder, or a single `.kicad_sym` / `.kicad_mod` / `.step`.
+
+```bash
+python scripts/lib_manager.py ingest ~/Downloads/tpa3255.zip \
+    -c TI-TPAxxx_AUDIO-AMP --dry-run      # look first
+python scripts/lib_manager.py ingest ~/Downloads/tpa3255.zip \
+    -c TI-TPAxxx_AUDIO-AMP --yes          # then do it
+```
+
+What it does for you:
+
+* finds **every** symbol, footprint and model in the bundle, not just the first;
+* skips macOS `__MACOSX/._*` resource forks and `.DS_Store`, and refuses
+  archive members that try to escape the extraction directory;
+* splits a multi-symbol `.kicad_sym` into one file per symbol, which is what
+  every official KiCad library does;
+* sanitises names that would be illegal on Windows —
+  `Inductor_2*10uH_Leaded_7W15` becomes `Inductor_2_10uH_Leaded_7W15`;
+* names each 3D model after its **footprint**, and rewrites the footprint's
+  model path to `${KICAD_CUSTOM_LIB}/…`, creating the `(model …)` block if the
+  vendor shipped none;
+* sets each symbol's `Footprint` property to `<Category>:<Footprint>`;
+* reports anything it could not pair instead of guessing.
+
+Useful flags: `--select NAME …` to import only some items,
+`--conflict skip|overwrite|rename` (default: skip with a warning).
+
+### Batch import
+Drop downloads into `staging-temp/intake/<Category>/` and run:
+```bash
+python scripts/lib_manager.py sync-staging --archive
+```
+Each item is independent — one failure is reported and the rest continue. With
+`--archive`, imported items move to `staging-temp/imported_archive/`.
+
+### Rename and reorganise
+These rewrite references across the **whole** library, including symbols in
+other categories and `(extends …)` in sibling symbol files.
+
+```bash
+python scripts/lib_manager.py rename symbol    TI-TPAxxx_AUDIO-AMP:TPA3255DDV TPA3255DDVR
+python scripts/lib_manager.py rename footprint TI-TPAxxx_AUDIO-AMP:SOP63P810X120-44N SOP65P810X120-44N --update-model-file
+python scripts/lib_manager.py rename model     TI-TPAxxx_AUDIO-AMP:old.step amp_body.step
+python scripts/lib_manager.py rename category  3255 TI-TPAxxx_AUDIO-AMP
+python scripts/lib_manager.py move   symbol    Conn_XT:XT60 --to Connector_XT
+```
+
+> Renaming anything breaks projects that already reference the old name. The
+> plan says so before you confirm. Afterwards, in the affected project, use
+> **Tools → Edit Symbol Library References** (or **Change Footprints**).
+
+### Export a project bundle
+```bash
+python scripts/lib_manager.py package ~/projects/amp
+python scripts/lib_manager.py package ~/projects/amp --out ~/projects/amp/libs/vendor
+```
+Copies only the custom parts the project actually uses into a self-contained
+`${KIPRJMOD}` bundle, so the project can be published without the whole
+library. It resolves each 3D model by reading the footprint's own path, carries
+a derived symbol's parent along even though the project never names it, merges
+the project's `sym-lib-table` / `fp-lib-table` at the **project root** without
+discarding rows you configured by hand (backing them up first), and lists
+separately everything it could not provide — normally parts from KiCad's own
+libraries.
+
+---
+
+## The desktop app
+
+```bash
+python scripts/lib_manager.py          # or: lib_manager.py gui
+```
+
+* **Browser** — categories on the left; symbols, footprints or 3D models on
+  the right with live search and sortable columns. Rows with a problem are
+  underlined. Right-click for rename, move, copy name, open folder, delete.
+* **Import…** — add any number of ZIPs, folders or files; every candidate
+  appears in an editable table with its own name and category; **Preview
+  changes** shows the exact plan; the import runs in the background with a
+  progress bar and a log.
+* **Audit** — the same findings as `check`, filterable by severity, with the
+  suggested fix for the selected one. Double-click to jump to the item.
+* **Package project…** — pick a project, see what will and will not be
+  bundled, then run it.
+* A banner appears whenever the master tables fall out of date.
+
+Shortcuts: `Ctrl+I` import, `F2` rename, `Del` delete, `Ctrl+F` search,
+`F5` refresh.
+
+Preferences are stored in `~/.config/kicad_customlib/gui.json`, outside the
+repository.
+
+If Tk is missing the app says how to install it (`pacman -S tk`,
+`apt install python3-tk`, …). Everything is available from the CLI regardless.
+
+---
+
+## Where provenance fits
+
+`provenance.json` records only what the files cannot tell you: the original
+vendor filename, which download it came from, and the date. Keys are
+`<Category>/<kind>/<name>`, sorted, with no global timestamp — so an unchanged
+save is byte-identical and never causes a spurious git conflict between
+machines. It is advisory: the library works perfectly without it, renames keep
+it in step, and `check` reports entries whose files have disappeared.
+
+A corrupt `provenance.json` is a loud error that leaves the file untouched,
+never a silent reset.
+
+Upgrading from the old `manifest.json`:
+```bash
+python scripts/lib_manager.py migrate-manifest
+```
+Records with no files on disk behind them are dropped rather than carried
+forward. The old file is left in place for you to delete.
+
+---
+
+## Adjusting 3D model alignment
+
+1. Open the footprint in KiCad's **Footprint Editor**.
+2. `E` (Properties) → **3D Models**.
+3. Adjust offset and rotation until the model sits on the pads.
+4. Save.
+
+The offsets live in the `.kicad_mod`, so they apply everywhere that footprint
+is used — and the tooling only ever replaces the model *path*, so your
+alignment survives renames, category moves and packaging.
+
+---
+
+## Development
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pytest -q
+```
+
+Core and GUI are standard-library only; `pytest` is dev-only and
+`tkinterdnd2` is an optional extra for drag-and-drop. Tests that need the
+installed KiCad libraries or `kicad-cli` skip when they are absent, and the
+GUI tests skip without a display.
+
+`AGENTS.md` documents the architecture, the invariants, and the facts measured
+from KiCad 10's own libraries. Read it before changing anything under
+`scripts/`.

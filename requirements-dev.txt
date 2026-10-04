@@ -1,0 +1,5 @@
+# Development-only. The library tool itself uses the standard library alone.
+pytest>=8.0
+
+# Optional extra: drag-and-drop in the GUI. The interface works without it.
+# tkinterdnd2>=0.4

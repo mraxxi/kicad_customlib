@@ -1,125 +1,279 @@
 # AI Agent Operating Guidelines — KiCad Custom Library (`KICAD_CUSTOM_LIB`)
 
-> **Scope**: This document governs how AI coding assistants (Claude, Gemini, Antigravity, MCP Konnect, ChatGPT, etc.) must interact with, modify, and extend components in this repository.
+> **Scope**: how AI coding assistants (Claude, Gemini, Antigravity, MCP Konnect,
+> ChatGPT, …) must interact with, modify and extend this repository.
+
+A personal KiCad 10 library — symbols, footprints and 3D models — synced
+between two machines with git, plus a stdlib-only Python tool
+(`scripts/lib_manager.py`, CLI + Tkinter GUI) that ingests vendor downloads,
+keeps the three directory trees mirrored, patches cross-references, and
+generates the master library tables.
 
 ---
 
-## 1. Golden Rules of Library Integrity
+## 1. Architecture: two rules that explain everything else
 
-### Rule 1: Never Corrupt KiCad S-Expressions
-- KiCad files (`*.kicad_sym`, `*.kicad_mod`, `*.kicad_sch`, `*.kicad_pcb`, `sym-lib-table`, `fp-lib-table`) are serialized S-expression syntax trees with strict order dependency, nested parentheses, and UUIDs.
-- **NEVER** use naive text replacement or regex strings that could truncate closing parentheses, strip UUIDs, or alter float formatting.
-- Whenever possible, utilize `scripts/src/core/s_expr.py` or Konnect MCP tools to manipulate KiCad files.
+### Rule A — The disk is the source of truth
+There is no database of parts. `core/library.py` scans the three directory
+trees and *derives* every relationship:
 
-### Rule 2: Absolute Path Ban
-- **NEVER** hardcode absolute local paths (e.g., `/home/username/...` or `C:\Users\...`) into any library file or configuration.
-- **3D Model Paths** inside `.kicad_mod` files MUST use the standardized environment variable:
-  ```scheme
-  (model "${KICAD_CUSTOM_LIB}/3dmodels/<Category>.3dshapes/<ModelName>.step"
-      (offset (xyz <X> <Y> <Z>))
-      (scale (xyz <Sx> <Sy> <Sz>))
-      (rotate (xyz <Rx> <Ry> <Rz>))
-  )
-  ```
-- **Symbol Footprint Fields** inside `.kicad_sym` files MUST use the standard library identifier prefix:
-  ```scheme
-  (property "Footprint" "<Category>:<FootprintName>" ...)
-  ```
+* symbol → footprint, from the symbol's `Footprint` property;
+* footprint → 3D model, from the footprint's own `(model "…")` path.
 
-### Rule 3: Exact 3-Way Directory Mirroring
-When adding a new library category, all three top-level directories MUST match the exact base category name:
+A "part" is therefore **not** one symbol + one footprint + one model. Several
+symbols may share a footprint, a footprint may carry zero or many models, and
+a reference may legitimately cross categories.
+
+`provenance.json` holds only what scanning cannot recover — the original
+vendor filename, where it came from, and the import date. It is advisory:
+**missing provenance is never an error.** (The old `manifest.json` was the
+source of truth, and a stale record made the library appear to contain things
+it did not. It is gone; `lib_manager.py migrate-manifest` converts an old one.)
+
+### Rule B — Plan, then apply
+Nothing writes to disk directly. Every mutating action builds an `ops.Plan`
+— a pure computation that touches nothing — which the CLI prints and the GUI
+displays, and only then does `ops.apply()` run it.
+
+```python
+plan = ingest.plan_ingest(root, category, candidates)   # reads only
+print(plan.summary())                                   # exact preview
+result = ops.apply(plan)                                # now it writes
+```
+
+**When adding a new operation, add a `plan_*` function. Never write to the
+library from inside a UI callback or a scanning function.**
+
+Consequences worth internalising:
+* Conflicts default to **skip with a warning**. Overwriting is opt-in.
+* Directories are created **lazily**, by the file operations themselves.
+  Never pre-create the three mirror directories: git does not track an empty
+  directory, so an empty category exists on one machine and not the other.
+  (This is exactly how the stale `3255` category came about.)
+* Writes are atomic — temp file in the destination directory, then
+  `os.replace` — so no KiCad file is ever left half-written.
+* After a successful apply, always regenerate the tables and save provenance.
+
+---
+
+## 2. Golden rules of library integrity
+
+### Rule 1: Never corrupt KiCad S-expressions
+KiCad files are serialized S-expression trees with order dependence, nested
+parentheses and UUIDs. **Always** go through `core/s_expr.py` (or Konnect MCP
+tools for live project files).
+
+* **Never** `re.sub` with an interpolated replacement string. A value
+  containing a backslash — a Windows path, an escaped quote — is reinterpreted
+  as a group reference and corrupts the file. `s_expr` computes
+  `(start, end, replacement)` edit spans and applies them back-to-front.
+* **Never** regex across a whole file for something that belongs to one block.
+  `get_property`/`set_property` take a block offset precisely because the old
+  code patched the first `Footprint` property in the file and mislabelled every
+  other symbol in a multi-symbol bundle.
+* Reads tolerate a BOM and CRLF; writes always emit LF. Read-then-write is
+  byte-identical, and there are round-trip tests to keep it that way.
+
+### Rule 2: Absolute path ban
+**Never** hardcode a local path into any library file or config.
+
+3D model paths inside `.kicad_mod`:
+```scheme
+(model "${KICAD_CUSTOM_LIB}/3dmodels/<Category>.3dshapes/<ModelName>.step"
+    (offset (xyz <X> <Y> <Z>))
+    (scale  (xyz <Sx> <Sy> <Sz>))
+    (rotate (xyz <Rx> <Ry> <Rz>))
+)
+```
+Symbol footprint fields inside `.kicad_sym`:
+```scheme
+(property "Footprint" "<Category>:<FootprintName>" …)
+```
+Packaged project bundles use `${KIPRJMOD}` instead. `check` reports any path
+that is absolute, relative or uses another variable.
+
+When repointing a model, replace **only the path token** — a hand-tuned
+offset/scale/rotate in the footprint is the owner's alignment work and must
+survive a rename or a category move.
+
+### Rule 3: Directory mirroring
+A category's three directories share one base name:
+
 1. `symbols/<Category>.kicad_symdir/`
 2. `footprints/<Category>.pretty/`
 3. `3dmodels/<Category>.3dshapes/`
 
+The *names* must match exactly. A directory should exist only when it holds a
+file — see Rule B. A symbol-only or footprint-only category is normal and
+`check` reports it as a note, not an error.
+
+### Rule 4: One symbol per `.kicad_sym`
+All 22 784 official KiCad 10 symbol files hold exactly one top-level
+`(symbol …)`. A multi-symbol vendor bundle or project cache library must be
+**split**, one file per symbol, named after the symbol. See §7.1.
+
+### Rule 5: Stdlib only
+Core and GUI use the standard library only. `tkinterdnd2` is optional and must
+degrade gracefully. `pytest` is a dev-only dependency. Everything must run on
+Linux, Windows and macOS: no POSIX-only behaviour, no hard-coded separators,
+`\n` line endings on write.
+
 ---
 
-## 2. Directory Layout & Roles
+## 3. Directory layout & roles
 
-| Path | Description | Git Tracked? |
+| Path | Description | Git |
 |---|---|---|
-| `sym-lib-table` | Master symbol table generated by `lib_manager.py` (v7 format). | Yes |
-| `fp-lib-table` | Master footprint table generated by `lib_manager.py` (v7 format). | Yes |
-| `manifest.json` | Database tracking component origins, dates, categories, and rename history. | Yes |
-| `symbols/` | Symbol libraries (`*.kicad_symdir` directories containing `*.kicad_sym` files). | Yes |
-| `footprints/` | Footprint libraries (`*.pretty` directories containing `*.kicad_mod` files). | Yes |
-| `3dmodels/` | 3D model assets (`*.3dshapes` directories containing `.step`, `.stp`, or `.wrl` files). | Yes |
-| `staging-temp/` | Local intake scratchpad for downloading, testing, or inspecting raw part bundles. | **NO (Ignored)** |
-| `scripts/` | Python CLI and GUI automation engine (`lib_manager.py`). | Yes |
+| `sym-lib-table`, `fp-lib-table` | Master tables, generated (v7 format). Only non-empty libraries are listed. | Yes |
+| `provenance.json` | Original vendor names, sources, import dates. Advisory. | Yes |
+| `symbols/` | `*.kicad_symdir/` directories of `*.kicad_sym` | Yes |
+| `footprints/` | `*.pretty/` directories of `*.kicad_mod` | Yes |
+| `3dmodels/` | `*.3dshapes/` directories of `.step`/`.stp`/`.wrl` | Yes |
+| `template/` | Project templates, page layouts (`*.kicad_wks`) | Yes |
+| `staging-temp/` | Local intake scratchpad. `intake/<Category>/` in, `imported_archive/` out. | **No** |
+| `scripts/` | CLI, core engine and GUI | Yes |
+| `tests/` | pytest suite | Yes |
+| `manifest.json` | **Obsolete.** Superseded by `provenance.json`. | legacy |
+
+### Module map (`scripts/src/`)
+```
+core/
+  naming.py      name validation, sanitising, official-nickname collisions
+  s_expr.py      quote/paren-aware KiCad S-expression read, edit, write
+  library.py     read-only scanner -> index + reference resolution
+  provenance.py  provenance.json, and migration from manifest.json
+  ops.py         Plan / Operation / apply, conflict policies, atomic writes
+  ingest.py      candidate detection, auto-pairing, import planning
+  refactor.py    rename & move with library-wide reference rewriting
+  table_gen.py   table generation and staleness
+  check.py       structured audit with severities
+  packager.py    lean per-project export
+gui/
+  controller.py  view-model: every decision, no Tk -> tested headlessly
+  widgets.py     category picker, plan preview, status bar, sortable tree
+  browser.py     category list + item table
+  import_dialog.py, rename_dialog.py, app.py
+```
 
 ---
 
-## 3. Standard Procedures for AI Agents
+## 4. Standard procedures
 
-### A. Adding a New Component via Script
-When asked to add a new part from a source folder or ZIP:
-```bash
-python scripts/lib_manager.py ingest /path/to/extracted_part --category <Category_Name> --part <Part_Name>
-```
-The script will automatically:
-1. Move the symbol to `symbols/<Category>.kicad_symdir/<Part>.kicad_sym`.
-2. Move the footprint to `footprints/<Category>.pretty/<Footprint>.kicad_mod`.
-3. Move the 3D model to `3dmodels/<Category>.3dshapes/<Model>.step`.
-4. Fix the 3D model path inside the `.kicad_mod` file to use `${KICAD_CUSTOM_LIB}`.
-5. Fix the `Footprint` property inside `.kicad_sym` to `<Category>:<Footprint>`.
-6. Update `manifest.json` and regenerate `sym-lib-table` and `fp-lib-table`.
+Every mutating command prints its plan first. `--dry-run` stops there; `--yes`
+skips the confirmation. A non-interactive run without `--yes` is **refused**,
+so a script can never mutate the library by accident.
 
-### B. Moving or Reorganizing Components
-When consolidating standalone parts into a broader family (e.g. moving `TPA3255` into `TI-TPAxxx_AUDIO-AMP`):
 ```bash
-python scripts/lib_manager.py move --part <Part_Name> --to <New_Category>
-```
-*Never move files manually without running the script or updating `manifest.json`, as this will leave broken references in `.kicad_sym` and `.kicad_mod`.*
+# What is actually in here?
+python scripts/lib_manager.py list -v
 
-### C. Regenerating Tables & Health Verification
-After any manual or programmatic changes:
-```bash
+# Audit. Exits non-zero on errors, so it can gate CI.
+python scripts/lib_manager.py check            # --json for machine output
+
+# Import a vendor download (ZIP, folder, or a single file)
+python scripts/lib_manager.py ingest ~/Downloads/part.zip -c <Category> --dry-run
+python scripts/lib_manager.py ingest ~/Downloads/part.zip -c <Category> --yes
+#   --select NAME ...                import only some items
+#   --conflict skip|overwrite|rename  default: skip with a warning
+
+# Batch-import staging-temp/intake/<Category>/
+python scripts/lib_manager.py sync-staging --archive
+
+# Rename / move. References across the whole library are rewritten.
+python scripts/lib_manager.py rename symbol    <Cat>:<Old> <New>
+python scripts/lib_manager.py rename footprint <Cat>:<Old> <New> --update-model-file
+python scripts/lib_manager.py rename model     <Cat>:<old.step> <new.step>
+python scripts/lib_manager.py rename category  <Old> <New>
+python scripts/lib_manager.py move   symbol    <Cat>:<Name> --to <NewCat>
+
+# Regenerate the master tables
 python scripts/lib_manager.py generate
-python scripts/lib_manager.py check
-```
-- `generate`: Scans all folders and produces valid `sym-lib-table` and `fp-lib-table`.
-- `check`: Audits the library for missing 3D files, broken footprint pointers, or unindexed files.
 
-### D. Packaging a Lean Project Export
-When preparing a project for public GitHub release:
+# Export only what a project uses, as a ${KIPRJMOD} bundle
+python scripts/lib_manager.py package ~/projects/amp
+
+# One-time: manifest.json -> provenance.json
+python scripts/lib_manager.py migrate-manifest
+
+python scripts/lib_manager.py gui              # or no arguments
+```
+
+**Never move or rename library files by hand.** The scripts rewrite the
+`Footprint` property of every referencing symbol, the `(model …)` path of
+every referencing footprint, and `(extends …)` in sibling symbol files. Doing
+it manually leaves silent dangling references that only surface when KiCad
+fails to load a part.
+
+### Adding a new operation
+1. Add a `plan_*` function to the right `core/` module. It reads the disk and
+   returns an `ops.Plan`; it must not write.
+2. Attach a `plan.warn(...)` for anything the user should know, especially
+   when existing projects will break.
+3. Add tests that assert both the plan's contents *and* that planning wrote
+   nothing.
+4. Wire it into the CLI (a `cmd_*` plus a subparser) and, if it belongs there,
+   into `gui/controller.py`.
+
+### Running the tests
 ```bash
-python scripts/lib_manager.py package /path/to/project --out /path/to/project/project_libs
+python -m venv .venv && .venv/bin/pip install pytest
+.venv/bin/pytest -q
 ```
-This extracts *only* the used custom components into a self-contained `${KIPRJMOD}` bundle without leaking the entire multi-gigabyte library.
+Tests that need the installed KiCad libraries or `kicad-cli` skip when absent;
+GUI tests skip when there is no display.
 
 ---
 
-## 4. Component Naming Conventions
+## 5. Naming conventions
 
-- **Categories**: Use manufacturer or functional domain: `<Vendor>-<Family>` or `<Function>_<Subtype>`
-  - *Good*: `TI-TPAxxx_AUDIO-AMP`, `Passives_Inductors_Sagami`, `Connector_XT`
-  - *Bad*: `mylib`, `temp`, `new_parts`, `3255` (meaningless on its own)
-  - *Bad — collides with an official KiCad library*: `MCU_RaspberryPi`, `Connector`,
-    `Audio`, `Amplifier_Audio`. A colliding nickname makes `lib_id` resolution
-    depend on global-table order, which differs per machine. See §6.5; prefix
-    personal categories if in doubt (`AX_MCU_RaspberryPi`).
-  - Allowed characters: letters, digits, `_`, `-`, `.`, `+` (§6.1).
-- **Symbols**: Use exact manufacturer part number: `TPA3255DDV.kicad_sym`, `RP2040.kicad_sym`
-- **Footprints**: Use IPC-7351 standard names or manufacturer package names: `SOP63P810X120-44N.kicad_mod`, `JST_B4B-ZR_LF__SN_.kicad_mod`
-- **3D Models**: Match part name or package name with lowercase extension: `TPA3255DDV.step`, `7W15-SAGAMI.step`
+Allowed characters: letters, digits, `_`, `-`, `.`, `+` — a superset of what
+the official libraries use, so a legitimate KiCad name is never rejected.
+`:` (the `lib_id` separator), path separators, leading/trailing dots, Windows
+reserved names (`CON`, `NUL`, `COM1`, …) and names over 100 characters are
+refused. Names differing only by case cannot coexist on Windows or macOS and
+are an error.
+
+* **Categories** — manufacturer or functional domain: `<Vendor>-<Family>` or
+  `<Function>_<Subtype>`.
+  * *Good*: `TI-TPAxxx_AUDIO-AMP`, `Passives_Inductors_Sagami`, `Connector_XT`
+  * *Bad*: `mylib`, `temp`, `new_parts`, `3255` (meaningless on its own)
+  * *Bad — collides with an official KiCad library*: `MCU_RaspberryPi`,
+    `Connector`, `Audio`, `Amplifier_Audio`. A colliding nickname makes
+    `lib_id` resolution depend on global table order, which differs per
+    machine. See §7.5; prefix personal categories if in doubt
+    (`AX_MCU_RaspberryPi`).
+* **Symbols** — exact manufacturer part number, and the filename stem must
+  match the internal symbol name: `TPA3255DDV.kicad_sym`, `RP2040.kicad_sym`.
+* **Footprints** — IPC-7351 or manufacturer package names:
+  `SOP63P810X120-44N.kicad_mod`, `JST_B4B-ZR_LF__SN_.kicad_mod`. The filename
+  stem must match the internal footprint name, because KiCad resolves a
+  `lib_id` by filename.
+* **3D models** — named after the **footprint** they belong to, lowercase
+  extension: `SOP63P810X120-44N.step`. A model belongs to a footprint, not to
+  a symbol, and the packager finds it by reading the footprint's own `(model …)`
+  path. Naming it after the symbol is why the old packager silently shipped
+  bundles with no 3D models.
 
 ---
 
-## 5. Konnect MCP Integration
+## 6. Konnect MCP integration
 If the `konnect` MCP server is active:
-- Route schematic queries and placement commands through Konnect MCP tools (`sch_components`, `sch_wiring`).
-- Do not bypass Konnect to directly inject raw text into active `.kicad_sch` or `.kicad_pcb` design files during live project sessions.
+* Route schematic queries and placement commands through Konnect MCP tools
+  (`sch_components`, `sch_wiring`).
+* Do **not** inject raw text into a live `.kicad_sch` or `.kicad_pcb`. The
+  tooling in this repo only ever *reads* project files — that is the
+  packager's job — and never edits them.
 
 ---
 
-## 6. KiCad 10 on-disk facts (verified, do not re-derive)
+## 7. KiCad 10 on-disk facts (verified, do not re-derive)
 
 Measured against **KiCad 10.0.6** on this machine: all 22 784 files in
 `/usr/share/kicad/symbols/*.kicad_symdir/`, plus `kicad-cli` behaviour probes.
 These are encoded as tests in `tests/test_kicad_conventions.py`, which skip
 when KiCad is not installed. **Re-run those tests rather than re-measuring.**
 
-### 6.1 Symbol library layout
+### 7.1 Symbol library layout
 | Fact | Measurement |
 |---|---|
 | A symbol library is a **directory** `<Nick>.kicad_symdir` | 224 directories, 0 loose `.kicad_sym` at the symbols root |
@@ -138,7 +292,7 @@ when KiCad is not installed. **Re-run those tests rather than re-measuring.**
 - `naming.py`'s allowed set (`A-Za-z0-9_-.+`) is a superset of what the official
   libraries use, so it can never reject a legitimate KiCad name.
 
-### 6.2 Derived symbols (`extends`) — cross-file, not in-file
+### 7.2 Derived symbols (`extends`) — cross-file, not in-file
 Of 12 249 derived symbols in the official libraries:
 - **0** have their parent defined in the same file.
 - **0** reference a parent outside their own `.kicad_symdir`.
@@ -153,7 +307,7 @@ the symdir** for `(extends "<old>")`. An in-file-only rewrite silently breaks
 derived symbols. Moving a symbol out of a symdir breaks any sibling that
 extends it — detect and refuse, or move the whole family.
 
-### 6.3 Unit sub-symbols
+### 7.3 Unit sub-symbols
 Nested one level below the top-level symbol and named `<Parent>_<unit>_<style>`:
 ```
 (symbol "LM358"            ->  (symbol "LM358_0_1"
@@ -163,7 +317,7 @@ Nested one level below the top-level symbol and named `<Parent>_<unit>_<style>`:
 `_<unit>_<style>` child, the `Value` property when it equals the old name, the
 filename, and sibling `extends` references.
 
-### 6.4 `kicad-cli` as a validator — asymmetric, read carefully
+### 7.4 `kicad-cli` as a validator — asymmetric, read carefully
 | Command | Corrupt input | Good input | Verdict |
 |---|---|---|---|
 | `fp export svg -o <dir> <lib.pretty>` | exit **2** | exit 0 + one SVG per footprint | **Trustworthy** by exit code |
@@ -179,7 +333,7 @@ filename, and sibling `extends` references.
   against the real library.
 - `kicad-cli` remains optional; skip these checks silently when it is absent.
 
-### 6.5 Nickname collisions with official libraries
+### 7.5 Nickname collisions with official libraries
 224 official symbol nicknames, 155 footprint nicknames. Checked examples:
 
 | Candidate | Collides? |
@@ -193,5 +347,5 @@ which differs between machines. Validate new category names against
 `$KICAD10_SYMBOL_DIR` / `$KICAD10_FOOTPRINT_DIR`, falling back to
 `/usr/share/kicad/{symbols,footprints}`, and warn on collision.
 
-> The §4 example `MCU_RaspberryPi` in this document is therefore a **bad**
+> The §5 example `MCU_RaspberryPi` in this document is therefore a **bad**
 > example. Prefer a personal prefix, e.g. `AX_MCU_RaspberryPi`.

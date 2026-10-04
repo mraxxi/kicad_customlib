@@ -297,7 +297,7 @@ def test_kicad_cli_is_optional(lib_root):
     _healthy(lib_root)
     report = check.run(lib_root, use_kicad_cli=False)
     assert report.kicad_cli_used is False
-    assert "not parse-checked by KiCad" in report.summary()
+    assert "did not run" in report.summary()
     assert report.exit_code == 0
 
 

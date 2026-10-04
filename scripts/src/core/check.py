@@ -102,7 +102,8 @@ class Report:
             lines.append(f.format())
         if not self.kicad_cli_used:
             lines.append(
-                "note: kicad-cli was not found, so files were not parse-checked by KiCad"
+                "note: the kicad-cli parse checks did not run (not installed, or "
+                "skipped), so the files were not validated by KiCad itself"
             )
         return "\n".join(lines)
 
