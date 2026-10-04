@@ -240,3 +240,32 @@ def test_row_height_leaves_room_around_the_text():
 def test_windows_hidpi_hook_is_a_noop_elsewhere(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     assert theme.enable_windows_hidpi() is False
+
+
+@needs_display
+def test_the_root_window_background_matches_the_scheme(scheme):
+    """
+    The root is a tk widget, not a ttk one, so ttk.Style never reaches it.
+    Left unset it keeps Tk's #d9d9d9, which is the colour a resize exposes
+    for an instant before the children are laid out again.
+    """
+    import tkinter as tk
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        theme.apply_theme(root, palette=theme.read_kde_palette(scheme(BREEZE)))
+        assert root.cget("background") == "#eff0f1"
+    finally:
+        root.destroy()
+
+
+@needs_display
+def test_a_dark_scheme_darkens_the_root_too(scheme):
+    import tkinter as tk
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        theme.apply_theme(root, palette=theme.read_kde_palette(scheme(BREEZE_DARK)))
+        assert root.cget("background") == "#2a2e32"
+    finally:
+        root.destroy()

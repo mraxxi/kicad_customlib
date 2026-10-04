@@ -192,6 +192,15 @@ def apply_theme(root: tk.Misc, *, palette: Any = _UNSET) -> Tuple[str, Optional[
         return theme, None
 
     try:
+        # The root window itself is a tk widget, not a ttk one, so the style
+        # below never reaches it and it keeps Tk's default #d9d9d9. That is
+        # the colour a resize briefly exposes before the children are laid
+        # out again, so leaving it unset flashes grey against the scheme.
+        root.winfo_toplevel().configure(background=resolved.window_bg)
+    except tk.TclError:
+        pass
+
+    try:
         style.configure(".", background=resolved.window_bg,
                         foreground=resolved.window_fg)
         for widget in ("TFrame", "TLabelframe", "TPanedwindow"):

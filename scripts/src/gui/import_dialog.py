@@ -18,12 +18,14 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, font as tkfont, messagebox, ttk
+from tkinter import font as tkfont, messagebox, ttk
 from typing import Callable, Dict, List, Optional, Sequence
 
 from ..core import ingest as ingest_mod
 from ..core import naming
 from ..core import ops
+from . import filepicker
+from . import settings as st
 from .controller import Controller
 from .widgets import (GAP, GAP_M, PAD_DIALOG, PAD_SECTION, CategoryPicker,
                       PlanPreview, modal)
@@ -174,27 +176,30 @@ class ImportDialog(tk.Toplevel):
             self.settings.remember_dir(st.DIR_IMPORT_SOURCE, path)
             self.settings.save()
 
+    # The pickers hand their result back through on_done rather than
+    # returning it. A native helper is a separate process that can take
+    # seconds to appear, and waiting for it froze the whole application --
+    # see the note in filepicker._run_helper_async.
     def _add_zips(self) -> None:
-        paths = filepicker.open_files(
+        filepicker.open_files(
             self, title="Select part archives", initialdir=self._start_dir(),
             filters=filepicker.ARCHIVE_FILTERS,
+            on_done=self._add_sources,
         )
-        self._add_sources(paths)
 
     def _add_folder(self) -> None:
         """A real directory chooser -- the old dialog could not select one."""
-        path = filepicker.open_directory(
-            self, title="Select a part folder", initialdir=self._start_dir()
+        filepicker.open_directory(
+            self, title="Select a part folder", initialdir=self._start_dir(),
+            on_done=lambda path: self._add_sources([path] if path else []),
         )
-        if path:
-            self._add_sources([path])
 
     def _add_files(self) -> None:
-        paths = filepicker.open_files(
+        filepicker.open_files(
             self, title="Select KiCad files", initialdir=self._start_dir(),
             filters=filepicker.KICAD_FILTERS,
+            on_done=self._add_sources,
         )
-        self._add_sources(paths)
 
     def _on_drop(self, event) -> None:
         try:

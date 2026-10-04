@@ -41,6 +41,22 @@ def filesystem_is_case_insensitive(directory: Path) -> bool:
         probe.unlink()
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch):
+    """
+    Keep every test away from the developer's real GUI settings.
+
+    `settings.config_path()` honours $XDG_CONFIG_HOME, so redirecting it is
+    enough. Without this, a test asserting "no geometry has been stored yet"
+    passes or fails depending on whether whoever is running it has opened the
+    application before -- which is exactly how
+    test_app_does_not_store_the_geometry_of_an_unmapped_window started
+    failing after a few manual launches.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    yield
+
+
 @pytest.fixture
 def fixtures():
     """The builder module, for tests that want to construct bespoke files."""

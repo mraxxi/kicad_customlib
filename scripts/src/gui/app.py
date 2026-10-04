@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, font as tkfont, messagebox, ttk
+from tkinter import font as tkfont, messagebox, ttk
 from typing import Optional
 
 from ..core import check as check_mod
@@ -613,14 +613,24 @@ class LibraryManagerApp:
         start = self.settings.dir_for(
             st.DIR_PACKAGE_PROJECT, self.controller.default_dir(st.DIR_PACKAGE_PROJECT)
         )
-        chosen = filepicker.open_directory(
-            self.root, title="Select the KiCad project to package", initialdir=start
+        filepicker.open_directory(
+            self.root, title="Select the KiCad project to package", initialdir=start,
+            on_done=self._package_chosen,
         )
+
+    def _package_chosen(self, chosen: Optional[Path]) -> None:
+        """
+        Continue packaging once the folder is known.
+
+        Split out because the picker now reports back through a callback: a
+        native helper is a separate process, and waiting for it froze the
+        application.
+        """
         if not chosen:
             return
-        project = str(chosen)
         self.settings.remember_dir(st.DIR_PACKAGE_PROJECT, chosen)
         self.settings.save()
+        project = str(chosen)
         try:
             plan, result = self.controller.plan_package(Path(project))
         except Exception as exc:  # noqa: BLE001

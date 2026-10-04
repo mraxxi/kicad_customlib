@@ -251,10 +251,18 @@ inherit a layout sized for the first. *Library → Reset window layout* clears
 them. Preferences live in `~/.config/kicad_customlib/gui.json`, outside the
 repository.
 
-On Linux the file dialogs use `kdialog` (the real Plasma dialog) if it is
-installed, then `zenity`, then Tk's own. `pacman -S kdialog` is worth it on
-KDE. Colours come from the desktop's own scheme where `kdeglobals` can be
-read.
+On Linux the file dialogs use `zenity` if it is installed, then `kdialog`,
+then Tk's own — Tk's is not native there, which is why it looks nothing like
+the rest of the desktop. **zenity is preferred even on KDE**, which is the
+opposite of what you would expect: on this machine `kdialog` took a median of
+18.5 s to show its window over five runs, against zenity's 0.4 s every time.
+If yours behaves better, `KICAD_CUSTOMLIB_FILEPICKER=kdialog` forces the
+Plasma dialog; `tk` and `zenity` pin the others.
+
+The picker never blocks the interface — the window keeps repainting and
+resizing while a dialog is open, however slow the helper is.
+
+Colours come from the desktop's own scheme where `kdeglobals` can be read.
 
 If Tk is missing the app says how to install it (`pacman -S tk`,
 `apt install python3-tk`, …). Everything is available from the CLI regardless.

@@ -163,6 +163,18 @@ Two GUI conventions, both enforced by tests:
   `PAD_SECTION`, `PAD_BAR`, `GAP`, `GAP_XS`, `GAP_M`). A non-zero numeric
   `padding=`/`pady=`/`padx=` anywhere in `gui/` fails
   `test_no_module_hardcodes_a_padding`.
+* **Never block the Tk event loop.** `update()` dispatches input events and
+  re-enters the callback you are inside; `update_idletasks()` does not
+  process incoming expose or configure events, so the window stops resizing
+  and repaints as a black rectangle. Anything that waits -- a subprocess, a
+  network call -- is polled with `after()` or run on a thread that reports
+  back through a queue. `gui/filepicker.py` carries the measurements.
+* **Press the button in the test.** Constructing a dialog and inspecting its
+  contents does not execute a single command callback, and Tk swallows an
+  exception raised in one (`report_callback_exception` prints and returns, so
+  `invoke()` completes normally). `tests/test_gui_buttons.py` presses
+  everything with a root that re-raises; two missing imports reached a user
+  because nothing did this.
 * **Never ask Tk whether your own widget is showing.** `winfo_ismapped()`
   returns 0 for a correctly packed widget in a window that has not been
   mapped yet, and construction-time code runs before mapping. Track the state

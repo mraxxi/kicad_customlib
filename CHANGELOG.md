@@ -5,6 +5,64 @@ tracked by git history, not here.
 
 ## [Unreleased]
 
+### Fixed — the file dialogs, and the frozen window
+Three reported symptoms, two causes.
+
+- **"Nothing happens when I click Add folder/file."** `import_dialog.py`
+  referenced both `filepicker` and `settings as st` without importing either,
+  so all three source buttons raised `NameError` on the first line of the
+  handler. Tk sends an exception raised inside a command callback to
+  `report_callback_exception`, which prints a traceback to the terminal and
+  returns normally — so from the interface the buttons did nothing at all.
+  Introduced in the Phase 1/2 edits, which changed those call sites without
+  adding the imports.
+- **Nothing in the suite had ever pressed a button.** The widget tests
+  construct each dialog and inspect its contents, which is precisely the shape
+  of test that cannot catch this. New `tests/test_gui_buttons.py` finds every
+  `ttk.Button` and every context-menu entry, invokes it, and fails on anything
+  that raises. That needed a second fix of its own: `button.invoke()` does
+  *not* propagate a Python exception, so the first version of the test passed
+  with the bug still in place. The root now re-raises callback exceptions, and
+  removing either import makes two tests fail.
+- **The window would not resize, filled with black, and the whole GUI was
+  slow.** `filepicker` waited for the helper in a loop calling Tk's
+  `update()`. `update()` dispatches input events, so it re-entered the very
+  callback that opened the dialog, nesting one wait inside another. Switching
+  to `update_idletasks()` removed the re-entrancy but not the freeze, and
+  measuring it said so plainly: zero redraw cycles and a resize silently
+  dropped for the whole time a dialog was open, because `update_idletasks()`
+  flushes Tk's own pending redraws and never processes an incoming expose or
+  configure event. The uncovered area was therefore never drawn, which is the
+  black rectangle. Both are gone: nothing waits any more. The helper is polled
+  from Tk's event loop with `after()`, the result arrives on the UI thread
+  through `on_done`, and a click now returns control in about 1 ms with a
+  6-second helper — 283 timer ticks and a successful resize during the wait,
+  where there had been none.
+- Helper output is drained on a worker thread. `Popen` with two pipes and no
+  reader deadlocks once a helper writes more than the pipe buffer holds, about
+  64 KiB, because it blocks in `write()` while we wait for it to exit.
+- A second dialog is refused while one is open, which is what the re-entrancy
+  had been producing.
+- **zenity is now preferred over kdialog, even on KDE.** Measured, not
+  assumed: kdialog took a median of 18.5 s to show its window over five runs
+  on the development machine (23.5 s, 18.5 s, 0.7 s, and twice over 50 s),
+  matching a D-Bus activation timing out; zenity took 0.4 s every time. A
+  dialog that takes twenty seconds half the time is not a nicer dialog.
+  `KICAD_CUSTOMLIB_FILEPICKER=kdialog` still asks for the Plasma one. This
+  reverses the advice in the Phase 2 notes, which recommended installing
+  kdialog on the strength of its appearance alone.
+- The root window's background is set from the colour scheme. It is a `tk`
+  widget, not a `ttk` one, so `ttk.Style` never reached it and it kept Tk's
+  `#d9d9d9` — the colour a resize exposes for an instant before the children
+  are laid out again, which flashed grey against `#eff0f1`.
+- Tests no longer read the developer's real `~/.config/kicad_customlib/gui.json`.
+  An autouse fixture redirects `$XDG_CONFIG_HOME`. Without it,
+  `test_app_does_not_store_the_geometry_of_an_unmapped_window` passed or failed
+  depending on whether whoever ran it had ever opened the application — it
+  started failing partway through this work for exactly that reason.
+- Dead `from tkinter import filedialog` imports removed from `app.py` and
+  `import_dialog.py`.
+
 ### GUI plan Phase 5 — Polish
 - **Quitting with uncommitted library changes asks first**, offering
   *Commit & Push* / *Quit anyway* / *Cancel*. The classic two-machine failure
