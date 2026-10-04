@@ -1,15 +1,51 @@
 {
   "version": 2,
   "items": {
-    "TPAxxxx_TI-AUDIO-AMP/footprint/SOP63P810X120-44N": {
+    "CUSTOM_G/footprint/RCJ-045_RCA": {
+      "original_name": "CUI_RCJ-045.kicad_mod",
+      "imported": "2026-10-05"
+    },
+    "CUSTOM_G/model/RCJ-045_RCA.step": {
+      "original_name": "RCJ-045.step",
+      "imported": "2026-10-05"
+    },
+    "CUSTOM_G/symbol/RCJ-045_RCA": {
+      "original_name": "RCJ-045.kicad_sym",
+      "imported": "2026-10-05"
+    },
+    "CUSTOM_GENERIC-AUDIO-CONN/footprint/Inductor_2_10uH_Leaded_7W15": {
+      "original_name": "Inductor_2_10uH_Leaded_7W15.kicad_mod",
+      "imported": "2026-10-05"
+    },
+    "CUSTOM_GENERIC-AUDIO-CONN/model/Inductor_2_10uH_Leaded_7W15.step": {
+      "original_name": "7W15-COLORED.step",
+      "imported": "2026-10-05"
+    },
+    "CUSTOM_GENERIC-AUDIO-CONN/symbol/Inductor_2_10uH_Leaded_7W15": {
+      "original_name": "7W15.kicad_sym",
+      "imported": "2026-10-05"
+    },
+    "CUSTOM_Sagami-inductors/footprint/Inductor_2_10uH_Leaded_7W15": {
+      "original_name": "Inductor_2_10uH_Leaded_7W15.kicad_mod",
+      "imported": "2026-10-05"
+    },
+    "CUSTOM_Sagami-inductors/model/Inductor_2_10uH_Leaded_7W15.step": {
+      "original_name": "7W15-COLORED.step",
+      "imported": "2026-10-05"
+    },
+    "CUSTOM_Sagami-inductors/symbol/Inductor_2_10uH_Leaded_7W15": {
+      "original_name": "7W15.kicad_sym",
+      "imported": "2026-10-05"
+    },
+    "TPAxxxx_TI-/footprint/SOP63P810X120-44N": {
       "original_name": "SOP63P810X120-44N.kicad_mod",
       "imported": "2026-10-04"
     },
-    "TPAxxxx_TI-AUDIO-AMP/model/SOP63P810X120-44N.step": {
+    "TPAxxxx_TI-/model/SOP63P810X120-44N.step": {
       "original_name": "TPA3255DDV.step",
       "imported": "2026-10-04"
     },
-    "TPAxxxx_TI-AUDIO-AMP/symbol/TPA3255DDV": {
+    "TPAxxxx_TI-/symbol/TPA3255DDV": {
       "original_name": "TPA3255DDV.kicad_sym",
       "imported": "2026-10-04"
     }

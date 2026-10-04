@@ -524,7 +524,7 @@
 		(uuid "d9c2a906-bb79-48e6-a145-51b32d9b904c")
 	)
 	(embedded_fonts no)
-	(model "${KICAD_CUSTOM_LIB}/3dmodels/TPAxxxx_TI-AUDIO-AMP.3dshapes/SOP63P810X120-44N.step"
+	(model "${KICAD_CUSTOM_LIB}/3dmodels/TPAxxxx-TI_Audio_Amps.3dshapes/SOP63P810X120-44N.step"
 		(offset
 			(xyz 0.0 0.0 0.0)
 		)

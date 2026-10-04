@@ -5,6 +5,27 @@ tracked by git history, not here.
 
 ## [Unreleased]
 
+### Fixes found by the first CI runs
+- `test_case_colliding_symbols_in_one_category_are_an_error` could only pass on
+  a case-sensitive filesystem: it wrote two files differing only by case, which
+  Windows and macOS collapse into one, leaving nothing to detect. It now skips
+  where case is folded (probed, not inferred from `sys.platform`), and a new
+  test drives the same detection through a hand-built index so it is verified
+  on every platform.
+- Tcl on the hosted Windows image fails after roughly 34 Tk interpreter
+  create/destroy cycles. A shared session-scoped root was tried as a
+  workaround and hung every macOS job indefinitely, so per-test roots — the
+  configuration known to pass on Linux and macOS — are kept, and the Tk widget
+  tests skip on Windows *CI only*. A developer on a real Windows desktop still
+  runs them.
+- The stale-tables banner is anchored to an explicit toolbar reference instead
+  of `winfo_children()[0]`. The old form was correct in practice, since the
+  toolbar is the first widget created with the root as parent, but it tied the
+  layout to creation order needlessly. `widgets.StaleBanner` carried the same
+  assumption and was unused; removed.
+- CI jobs carry `timeout-minutes`, so a deadlock fails in 15 minutes instead of
+  running against the six-hour default.
+
 ### Phase 4 — Documentation and repository hygiene
 - `README.md` rewritten for the current architecture: setup on a new machine,
   the everyday workflows, the GUI tour, the full CLI reference, how provenance

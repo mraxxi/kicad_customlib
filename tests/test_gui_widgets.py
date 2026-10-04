@@ -12,6 +12,8 @@ The whole module skips when no display is available, so CI stays green.
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,43 +35,38 @@ def _display_available() -> bool:
     return True
 
 
-pytestmark = pytest.mark.skipif(
-    not _display_available(), reason="no display available for Tk"
-)
+# Tcl on the hosted Windows runner dies after roughly 34 interpreter
+# create/destroy cycles ("Can't find a usable init.tcl"). That is a property of
+# that image, not of Windows, so the skip is limited to CI and a developer on a
+# real Windows desktop still gets the coverage. These tests check
+# platform-independent wiring, and Linux and macOS both run them.
+_WINDOWS_CI = sys.platform.startswith("win") and os.environ.get("CI") == "true"
+
+pytestmark = [
+    pytest.mark.skipif(not _display_available(), reason="no display available for Tk"),
+    pytest.mark.skipif(
+        _WINDOWS_CI,
+        reason="Tcl on the Windows CI image fails after many interpreter "
+               "create/destroy cycles; covered on Linux and macOS",
+    ),
+]
 
 
-@pytest.fixture(scope="session")
-def _tk_session():
+@pytest.fixture
+def tk_root():
     """
-    One Tk interpreter for the whole session.
+    A fresh Tk interpreter per test.
 
-    Creating and destroying one per test exhausted Tcl on a Windows CI runner:
-    34 tests passed and the 35th failed with "Can't find a usable init.tcl".
-    One interpreter, reused, is both more robust and faster.
+    A session-scoped shared root was tried, to work around Tcl exhaustion on
+    the Windows runner, and it hung every macOS job indefinitely -- most
+    likely a grab left behind by a destroyed Toplevel, which macOS enforces
+    and Linux tolerates. Per-test roots are the configuration that is known to
+    pass on Linux and macOS, so Windows CI skips this module instead.
     """
     root = tk.Tk()
     root.withdraw()
     yield root
     root.destroy()
-
-
-def _clear(root) -> None:
-    """Return the shared interpreter to a clean slate between tests."""
-    for child in list(root.winfo_children()):
-        child.destroy()
-    # LibraryManagerApp installs a menubar on the root. Clear it with an
-    # empty string, which detaches it without creating another child widget.
-    try:
-        root.config(menu="")
-    except tk.TclError:
-        pass
-
-
-@pytest.fixture
-def tk_root(_tk_session):
-    _clear(_tk_session)
-    yield _tk_session
-    _clear(_tk_session)
 
 
 @pytest.fixture
@@ -282,10 +279,13 @@ def test_app_constructs_against_an_empty_library(tk_root, lib_root):
 
 def test_app_shows_the_stale_banner_without_a_pack_error(tk_root, lib_root):
     """
-    Regression: refresh() packed the banner `after=winfo_children()[0]`, which
-    assumed the toolbar was the root's first child. Once a menubar or anything
-    else took that slot, Tk raised "window ... isn't packed". The banner is now
-    anchored to an explicit reference.
+    The banner must sit directly below the toolbar when the tables are stale.
+
+    refresh() used to anchor it with `after=winfo_children()[0]`. That was
+    correct in practice -- the toolbar is the first widget created with the
+    root as parent -- but it broke the moment anything else occupied that
+    slot, which is what a shared test interpreter did. Anchoring to an
+    explicit reference removes the dependency on creation order.
     """
     from src.gui.app import LibraryManagerApp
     kf.write_symbol(lib_root / "symbols" / "C.kicad_symdir" / "S.kicad_sym")
@@ -308,7 +308,7 @@ def test_app_hides_the_stale_banner_once_the_tables_are_current(tk_root, control
 
 
 def test_app_can_be_constructed_twice_in_one_interpreter(tk_root, control):
-    """The shared Tk session reuses one interpreter, so this must be safe."""
+    """Building a second app over the same root must not break refresh()."""
     from src.gui.app import LibraryManagerApp
     LibraryManagerApp(tk_root, control.root)
     second = LibraryManagerApp(tk_root, control.root)

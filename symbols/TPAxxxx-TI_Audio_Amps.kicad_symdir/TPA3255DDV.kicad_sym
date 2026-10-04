@@ -35,7 +35,7 @@
 				(justify left bottom)
 			)
 		)
-		(property "Footprint" "TPAxxxx_TI-AUDIO-AMP:SOP63P810X120-44N"
+		(property "Footprint" "TPAxxxx-TI_Audio_Amps:SOP63P810X120-44N"
 			(at 1.27 1.27 0)
 			(show_name no)
 			(do_not_autoplace no)

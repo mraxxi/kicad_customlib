@@ -9,6 +9,10 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    # The suite takes well under a minute. A generous cap that still fails fast
+    # if something deadlocks -- a hung Tk test once ran for 40 minutes before
+    # being noticed, and the default limit is six hours.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +46,7 @@ jobs:
 
   line-endings:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Reject CRLF in KiCad text sources

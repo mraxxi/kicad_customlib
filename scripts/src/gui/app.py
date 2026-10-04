@@ -65,9 +65,9 @@ class LibraryManagerApp:
     # -- construction -----------------------------------------------------
     def _build(self) -> None:
         # Kept as an attribute because the stale-tables banner packs itself
-        # directly after it. Using winfo_children()[0] as the anchor would
-        # break as soon as anything else became the root's first child -- a
-        # menubar, for instance.
+        # directly after it. Anchoring on winfo_children()[0] instead happens
+        # to work -- this is the first widget created with the root as parent --
+        # but it ties the layout to creation order for no reason.
         self.toolbar = ttk.Frame(self.root, padding=(10, 8))
         toolbar = self.toolbar
         toolbar.pack(fill=tk.X)
