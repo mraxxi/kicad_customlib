@@ -277,6 +277,48 @@ def stale_keys(prov: Provenance, lib) -> List[str]:
     return out
 
 
+def recoverable(prov: Provenance, lib) -> Dict[str, str]:
+    """
+    Stale entries that can be re-homed instead of discarded.
+
+    A stale key whose kind and name match exactly one item on disk is almost
+    certainly the same item under an old category name -- which is what a
+    category rename, or the plan-time mutation bug, leaves behind. The entry
+    still holds the original vendor filename and import date, so moving it is
+    strictly better than dropping it.
+
+    Ambiguous cases (the same kind and name in two categories) are left out:
+    guessing which one it belongs to could attach the wrong vendor history.
+    Returns {old_key: new_key}.
+    """
+    by_kind_name: Dict[tuple, List[str]] = {}
+    for sym in lib.symbols:
+        by_kind_name.setdefault((KIND_SYMBOL, sym.name), []).append(sym.category)
+    for fp in lib.footprints:
+        by_kind_name.setdefault((KIND_FOOTPRINT, fp.name), []).append(fp.category)
+    for model in lib.models:
+        by_kind_name.setdefault((KIND_MODEL, model.filename), []).append(model.category)
+
+    out: Dict[str, str] = {}
+    for key in stale_keys(prov, lib):
+        _category, kind, name = split_key(key)
+        candidates = by_kind_name.get((kind, name), [])
+        if len(candidates) != 1:
+            continue
+        new_key = make_key(candidates[0], kind, name)
+        if new_key not in prov.items:
+            out[key] = new_key
+    return out
+
+
+def recover(prov: Provenance, lib) -> Dict[str, str]:
+    """Re-home every unambiguously recoverable entry. Returns {old: new}."""
+    moves = recoverable(prov, lib)
+    for old_key, new_key in moves.items():
+        prov.items[new_key] = prov.items.pop(old_key)
+    return moves
+
+
 def prune(prov: Provenance, lib) -> List[str]:
     """Drop every stale entry. Returns the keys removed."""
     removed = stale_keys(prov, lib)

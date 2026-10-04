@@ -9,6 +9,7 @@ import pytest
 
 import lib_manager
 from src.core import library as lb
+from src.core import provenance as pv
 from src.core import s_expr as sx
 from src.core import table_gen as tg
 from tests import kicad_fixtures as kf
@@ -482,6 +483,75 @@ def test_migrate_manifest_dry_run_shows_the_result(cli, capsys):
     assert cli("migrate-manifest", "--dry-run") == 0
     assert "would contain" in capsys.readouterr().out
     assert not (cli.root / "provenance.json").exists()
+
+
+# --------------------------------------------------------------------------
+# prune-provenance
+# --------------------------------------------------------------------------
+
+def test_prune_provenance_without_a_file_is_not_an_error(cli, capsys):
+    assert cli("prune-provenance", "--yes") == 0
+    assert "No provenance.json" in capsys.readouterr().out
+
+
+def test_prune_provenance_on_a_clean_library_does_nothing(stocked, capsys):
+    assert stocked("prune-provenance", "--yes") == 0
+    assert "Nothing to do" in capsys.readouterr().out
+
+
+def test_prune_provenance_rehomes_a_stale_category(stocked, capsys):
+    """The repair for what the plan-time mutation bug left behind."""
+    prov = pv.load(stocked.root)
+    prov.items["Amp_T/symbol/TPA3255DDV"] = prov.items.pop("Amp_Test/symbol/TPA3255DDV")
+    prov.save()
+
+    assert stocked("prune-provenance", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "Re-home 1" in out
+    after = pv.load(stocked.root)
+    assert after.get("Amp_Test", pv.KIND_SYMBOL, "TPA3255DDV") is not None
+    assert "Amp_T/symbol/TPA3255DDV" not in after.items
+
+
+def test_prune_provenance_drops_what_it_cannot_place_and_says_what_it_was(stocked, capsys):
+    prov = pv.load(stocked.root)
+    prov.record("Amp_Test", pv.KIND_SYMBOL, "VANISHED", original_name="ghost.kicad_sym")
+    prov.save()
+
+    assert stocked("prune-provenance", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "Drop 1" in out
+    assert "ghost.kicad_sym" in out          # printed before it is lost
+    assert "Amp_Test/symbol/VANISHED" not in pv.load(stocked.root).items
+
+
+def test_prune_provenance_dry_run_changes_nothing(stocked, capsys):
+    prov = pv.load(stocked.root)
+    prov.record("Amp_Test", pv.KIND_SYMBOL, "VANISHED")
+    prov.save()
+    before = (stocked.root / "provenance.json").read_bytes()
+
+    assert stocked("prune-provenance", "--dry-run") == 0
+    assert "dry run" in capsys.readouterr().out
+    assert (stocked.root / "provenance.json").read_bytes() == before
+
+
+def test_prune_provenance_drop_only_skips_recovery(stocked, capsys):
+    prov = pv.load(stocked.root)
+    prov.items["Amp_T/symbol/TPA3255DDV"] = prov.items.pop("Amp_Test/symbol/TPA3255DDV")
+    prov.save()
+
+    assert stocked("prune-provenance", "--drop-only", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "Re-home" not in out
+    assert "Drop 1" in out
+    assert pv.load(stocked.root).get("Amp_Test", pv.KIND_SYMBOL, "TPA3255DDV") is None
+
+
+def test_prune_provenance_reports_a_corrupt_file(stocked, capsys):
+    (stocked.root / "provenance.json").write_text("{broken")
+    assert stocked("prune-provenance", "--yes") == 1
+    assert "not valid JSON" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------

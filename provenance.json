@@ -1,20 +1,16 @@
 {
   "version": 2,
   "items": {
-    "CUSTOM-Generic-Audio-Conns/footprint/PJ-35-320A_3.3MM-TRSS-4PIN-TH": {
-      "original_name": "PJ-35-320A_3.3MM-TRSS-TH.kicad_mod",
-      "imported": "2026-10-05"
-    },
     "CUSTOM-Generic-Audio-Conns/footprint/PJ-35-320A_3.3MM-TRSS-TH": {
       "original_name": "PJ-35-320A_3.3MM-TRSS-TH.kicad_mod",
       "imported": "2026-10-05"
     },
-    "CUSTOM-Generic-Audio-Conns/footprint/PJ-35-320D_3.3MM-TRSS-4PIN-SMD": {
+    "CUSTOM-Generic-Audio-Conns/footprint/PJ-35-320D_3.3MM-TRSS-SMD": {
       "original_name": "PJ-35-320D_3.3MM-TRSS-SMD.kicad_mod",
       "imported": "2026-10-05"
     },
-    "CUSTOM-Generic-Audio-Conns/footprint/PJ-35-320D_3.3MM-TRSS-SMD": {
-      "original_name": "PJ-35-320D_3.3MM-TRSS-SMD.kicad_mod",
+    "CUSTOM-Generic-Audio-Conns/footprint/RCJ-045_RCA": {
+      "original_name": "CUI_RCJ-045.kicad_mod",
       "imported": "2026-10-05"
     },
     "CUSTOM-Generic-Audio-Conns/model/PJ-35-320A_3.3MM-TRSS-TH.step": {
@@ -25,32 +21,24 @@
       "original_name": "PJ-35-320D.step",
       "imported": "2026-10-05"
     },
-    "CUSTOM-Generic-Audio-Conns/symbol/PJ-35-320__TRSS-4PIN": {
-      "original_name": "PJ-35-320-series.kicad_sym",
-      "imported": "2026-10-05"
-    },
-    "CUSTOM_G/footprint/RCJ-045_RCA": {
-      "original_name": "CUI_RCJ-045.kicad_mod",
-      "imported": "2026-10-05"
-    },
-    "CUSTOM_G/model/RCJ-045_RCA.step": {
+    "CUSTOM-Generic-Audio-Conns/model/RCJ-045_RCA.step": {
       "original_name": "RCJ-045.step",
       "imported": "2026-10-05"
     },
-    "CUSTOM_G/symbol/RCJ-045_RCA": {
+    "CUSTOM-Generic-Audio-Conns/symbol/RCJ-045_RCA": {
       "original_name": "RCJ-045.kicad_sym",
       "imported": "2026-10-05"
     },
-    "CUSTOM_GENERIC-AUDIO-CONN/footprint/Inductor_2_10uH_Leaded_7W15": {
-      "original_name": "Inductor_2_10uH_Leaded_7W15.kicad_mod",
+    "CUSTOM_Generic-Heatsinks/footprint/Heatsink-Clip-on": {
+      "original_name": "Heatsink-Clip-on.kicad_mod",
       "imported": "2026-10-05"
     },
-    "CUSTOM_GENERIC-AUDIO-CONN/model/Inductor_2_10uH_Leaded_7W15.step": {
-      "original_name": "7W15-COLORED.step",
+    "CUSTOM_Generic-Heatsinks/model/Heatsink-Clip-on.step": {
+      "original_name": "Heatsink-2255-custom-tpa3255.step",
       "imported": "2026-10-05"
     },
-    "CUSTOM_GENERIC-AUDIO-CONN/symbol/Inductor_2_10uH_Leaded_7W15": {
-      "original_name": "7W15.kicad_sym",
+    "CUSTOM_Generic-Heatsinks/symbol/Clip-on_Heatsink": {
+      "original_name": "CUSTOM_Heatsink_Clip-on.kicad_sym",
       "imported": "2026-10-05"
     },
     "CUSTOM_Sagami-inductors/footprint/Inductor_2_10uH_Leaded_7W15": {
@@ -65,29 +53,17 @@
       "original_name": "7W15.kicad_sym",
       "imported": "2026-10-05"
     },
-    "TPAxxxx_TI-/footprint/SOP63P810X120-44N": {
+    "TPAxxxx-TI_Audio_Amps/footprint/SOP63P810X120-44N": {
       "original_name": "SOP63P810X120-44N.kicad_mod",
       "imported": "2026-10-04"
     },
-    "TPAxxxx_TI-/model/SOP63P810X120-44N.step": {
+    "TPAxxxx-TI_Audio_Amps/model/SOP63P810X120-44N.step": {
       "original_name": "TPA3255DDV.step",
       "imported": "2026-10-04"
     },
-    "TPAxxxx_TI-/symbol/TPA3255DDV": {
+    "TPAxxxx-TI_Audio_Amps/symbol/TPA3255DDV": {
       "original_name": "TPA3255DDV.kicad_sym",
       "imported": "2026-10-04"
-    },
-    "_Generic-Heatsinks/footprint/Heatsink-Clip-on": {
-      "original_name": "Heatsink-Clip-on.kicad_mod",
-      "imported": "2026-10-05"
-    },
-    "_Generic-Heatsinks/model/Heatsink-Clip-on.step": {
-      "original_name": "Heatsink-2255-custom-tpa3255.step",
-      "imported": "2026-10-05"
-    },
-    "_Generic-Heatsinks/symbol/Clip-on_Heatsink": {
-      "original_name": "CUSTOM_Heatsink_Clip-on.kicad_sym",
-      "imported": "2026-10-05"
     }
   }
 }

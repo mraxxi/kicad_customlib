@@ -342,6 +342,70 @@ def cmd_migrate_manifest(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_prune_provenance(args: argparse.Namespace) -> int:
+    """
+    Repair provenance entries whose item is no longer where they say it is.
+
+    Nothing removes these automatically -- save() writes the items verbatim --
+    so a library that has been reorganised accumulates one entry per abandoned
+    name. Most are recoverable: when the kind and name still match exactly one
+    item on disk, only the category was wrong, and the entry still holds the
+    original vendor filename and import date. Those are re-homed. Only what
+    cannot be placed unambiguously is dropped, and its details are printed
+    first so the information is not lost silently.
+    """
+    try:
+        prov = pv.load(ROOT_DIR)
+    except pv.ProvenanceError as exc:
+        _err(f"error: {exc}")
+        return EXIT_ERROR
+
+    if not prov.existed:
+        _out(f"No {pv.FILENAME} to prune.")
+        return EXIT_OK
+
+    lib = lb.scan(ROOT_DIR)
+    stale = pv.stale_keys(prov, lib)
+    if not stale:
+        _out(f"Nothing to do: all {len(prov.items)} entr"
+             f"{'y' if len(prov.items) == 1 else 'ies'} match something on disk.")
+        return EXIT_OK
+
+    moves = {} if args.drop_only else pv.recoverable(prov, lib)
+    drops = [k for k in stale if k not in moves]
+
+    _out(f"{len(stale)} stale entr{'y' if len(stale) == 1 else 'ies'} "
+         f"of {len(prov.items)}.\n")
+
+    if moves:
+        _out(f"Re-home {len(moves)} (same item, old category name):")
+        for old_key in sorted(moves):
+            _out(f"  {old_key}\n    -> {moves[old_key]}")
+        _out("")
+
+    if drops:
+        _out(f"Drop {len(drops)} (cannot be placed unambiguously):")
+        for key in drops:
+            item = prov.items[key]
+            bits = [b for b in (item.original_name, item.source, item.imported) if b]
+            _out(f"  {key}" + (f"\n    was: {', '.join(bits)}" if bits else ""))
+        _out("")
+
+    if args.dry_run:
+        _out("(dry run: nothing was changed)")
+        return EXIT_OK
+    if not _confirm("Apply?", args.yes):
+        _out("Aborted.")
+        return EXIT_ABORTED
+
+    recovered = pv.recover(prov, lib) if not args.drop_only else {}
+    removed = pv.prune(prov, lib)
+    prov.save()
+    _out(f"re-homed {len(recovered)}, removed {len(removed)}; "
+         f"{len(prov.items)} entr{'y' if len(prov.items) == 1 else 'ies'} remain")
+    return EXIT_OK
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     """Show what the library actually contains, straight from the disk."""
     lib = lb.scan(ROOT_DIR)
@@ -417,6 +481,7 @@ Examples:
   lib_manager.py move symbol Conn_XT:XT60 --to Connector_XT
   lib_manager.py package ~/projects/amp --out ~/projects/amp/project_libs
   lib_manager.py migrate-manifest
+  lib_manager.py prune-provenance --dry-run
 
 Every mutating command prints its plan first. Add --dry-run to stop there, or
 --yes to skip the confirmation.
@@ -504,6 +569,15 @@ Every mutating command prints its plan first. Add --dry-run to stop there, or
         "migrate-manifest", help="convert the old manifest.json into provenance.json")
     add_mutating(p_migrate)
     p_migrate.set_defaults(func=cmd_migrate_manifest)
+
+    p_prune = subparsers.add_parser(
+        "prune-provenance",
+        help="drop provenance entries whose item is no longer on disk")
+    p_prune.add_argument(
+        "--drop-only", action="store_true",
+        help="discard stale entries instead of re-homing the recoverable ones")
+    add_mutating(p_prune)
+    p_prune.set_defaults(func=cmd_prune_provenance)
 
     p_gui = subparsers.add_parser("gui", help="launch the desktop interface")
     p_gui.set_defaults(func=cmd_gui)

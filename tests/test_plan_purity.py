@@ -165,3 +165,68 @@ def test_prune_removes_only_the_stale_entries(populated_lib, prov_with_history):
 
 def test_prune_is_a_no_op_on_a_clean_library(populated_lib, prov_with_history):
     assert pv.prune(prov_with_history, lb.scan(populated_lib)) == []
+
+
+# --------------------------------------------------------------------------
+# Recovery
+# --------------------------------------------------------------------------
+
+def test_recoverable_rehomes_an_entry_whose_category_name_is_stale(
+    populated_lib, prov_with_history
+):
+    """
+    The shape the bug left behind: the right item under a partially-typed
+    category. The entry still holds the vendor filename, so moving it beats
+    dropping it.
+    """
+    prov_with_history.items["Amp_T/symbol/TPA3251DDV"] = pv.Item(
+        original_name="vendor_3251.kicad_sym", source="SnapEDA", imported="2026-07-09"
+    )
+    moves = pv.recoverable(prov_with_history, lb.scan(populated_lib))
+    assert moves == {"Amp_T/symbol/TPA3251DDV": "Amp_Test/symbol/TPA3251DDV"}
+
+
+def test_recover_moves_the_entry_and_keeps_its_details(populated_lib, prov_with_history):
+    prov_with_history.items["Amp_T/symbol/TPA3251DDV"] = pv.Item(
+        original_name="vendor_3251.kicad_sym", source="SnapEDA", imported="2026-07-09"
+    )
+    assert len(pv.recover(prov_with_history, lb.scan(populated_lib))) == 1
+    moved = prov_with_history.get("Amp_Test", pv.KIND_SYMBOL, "TPA3251DDV")
+    assert moved.original_name == "vendor_3251.kicad_sym"
+    assert moved.imported == "2026-07-09"
+    assert "Amp_T/symbol/TPA3251DDV" not in prov_with_history.items
+
+
+def test_recovery_refuses_when_the_name_exists_in_two_categories(lib_root):
+    """Guessing could attach the wrong vendor history to a part."""
+    for cat in ("A", "B"):
+        kf.write_symbol(lib_root / "symbols" / f"{cat}.kicad_symdir" / "SHARED.kicad_sym")
+    prov = pv.load(lib_root)
+    prov.items["Old/symbol/SHARED"] = pv.Item(original_name="x.kicad_sym")
+    assert pv.recoverable(prov, lb.scan(lib_root)) == {}
+
+
+def test_recovery_refuses_when_the_destination_already_has_an_entry(
+    populated_lib, prov_with_history
+):
+    """A duplicate left by the bug carries no new information."""
+    prov_with_history.items["Amp_T/symbol/TPA3255DDV"] = pv.Item(original_name="dup")
+    assert pv.recoverable(prov_with_history, lb.scan(populated_lib)) == {}
+
+
+def test_recovery_does_not_touch_a_genuinely_renamed_item(populated_lib, prov_with_history):
+    """When the item's own name changed too, there is nothing to match on."""
+    prov_with_history.items["Amp_Test/symbol/OLD_NAME_ENTIRELY"] = pv.Item(
+        original_name="vendor.kicad_sym"
+    )
+    moves = pv.recoverable(prov_with_history, lb.scan(populated_lib))
+    assert "Amp_Test/symbol/OLD_NAME_ENTIRELY" not in moves
+
+
+def test_prune_after_recover_leaves_only_the_unplaceable(populated_lib, prov_with_history):
+    prov_with_history.items["Amp_T/symbol/TPA3251DDV"] = pv.Item(original_name="a")
+    prov_with_history.items["Amp_Test/symbol/VANISHED"] = pv.Item(original_name="b")
+    lib = lb.scan(populated_lib)
+    pv.recover(prov_with_history, lib)
+    assert pv.prune(prov_with_history, lib) == ["Amp_Test/symbol/VANISHED"]
+    assert prov_with_history.get("Amp_Test", pv.KIND_SYMBOL, "TPA3251DDV") is not None
