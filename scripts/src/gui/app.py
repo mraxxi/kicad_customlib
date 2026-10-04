@@ -30,7 +30,8 @@ from .controller import Controller, Row, parse_iid
 from .import_dialog import ImportDialog
 from .rename_dialog import CategoryRenameDialog, MoveDialog, RenameDialog
 from .sync_dialog import SyncDialog
-from .widgets import GitStrip, PlanPreview, StatusBar, apply_scaling, modal
+from .widgets import (GAP, GAP_M, GAP_XS, PAD_BAR, PAD_DIALOG, ChoiceDialog,
+                      GitStrip, PlanPreview, StatusBar, apply_scaling, modal)
 
 MAIN_MIN_WIDTH = 900
 MAIN_MIN_HEIGHT = 560
@@ -53,6 +54,11 @@ class LibraryManagerApp:
             self.settings, self.profile_key, on_dirty=self._schedule_save
         )
         self._save_job: Optional[str] = None
+        # Remembered for the session only: reopening the audit after fixing
+        # one error and losing the "Errors" filter is a small, repeated
+        # annoyance, but the choice is about the current task, not a
+        # preference worth writing to disk.
+        self.audit_severity = "all"
 
         self.base_title = (f"KiCad Custom Library Manager \u2014 "
                            f"{self.controller.root.name}")
@@ -75,24 +81,24 @@ class LibraryManagerApp:
         # directly after it. Anchoring on winfo_children()[0] instead happens
         # to work -- this is the first widget created with the root as parent --
         # but it ties the layout to creation order for no reason.
-        self.toolbar = ttk.Frame(self.root, padding=(10, 8))
+        self.toolbar = ttk.Frame(self.root, padding=PAD_BAR)
         toolbar = self.toolbar
         toolbar.pack(fill=tk.X)
         ttk.Label(toolbar, text="KiCad Custom Library Manager",
                   font=self._bold()).pack(side=tk.LEFT)
-        ttk.Label(toolbar, text=str(self.controller.root)).pack(side=tk.LEFT, padx=12)
+        ttk.Label(toolbar, text=str(self.controller.root)).pack(side=tk.LEFT, padx=GAP_M)
 
         ttk.Button(toolbar, text="Package project...",
                    command=self.on_package).pack(side=tk.RIGHT)
         ttk.Button(toolbar, text="Audit",
-                   command=self.on_audit).pack(side=tk.RIGHT, padx=6)
+                   command=self.on_audit).pack(side=tk.RIGHT, padx=GAP)
         ttk.Button(toolbar, text="Process staging",
                    command=self.on_staging).pack(side=tk.RIGHT)
         ttk.Button(toolbar, text="Import...",
-                   command=self.on_import).pack(side=tk.RIGHT, padx=6)
+                   command=self.on_import).pack(side=tk.RIGHT, padx=GAP)
 
         # The stale-tables banner sits between the toolbar and the browser.
-        self.banner = ttk.Frame(self.root, padding=(10, 6))
+        self.banner = ttk.Frame(self.root, padding=PAD_BAR)
         ttk.Label(self.banner,
                   text="The master library tables are out of date.",
                   font=self._bold()).pack(side=tk.LEFT)
@@ -103,12 +109,12 @@ class LibraryManagerApp:
         # when the library is not a git repository.
         self.git_strip = GitStrip(self.root, on_open=self.on_sync)
 
-        content = ttk.Frame(self.root, padding=(10, 0))
+        content = ttk.Frame(self.root, padding=(PAD_DIALOG, 0))
         content.pack(fill=tk.BOTH, expand=True)
 
         # The details pane is created before the browser: constructing the
         # browser immediately fires a selection callback, which writes here.
-        details = ttk.LabelFrame(content, text="Details", padding=8)
+        details = ttk.LabelFrame(content, text="Details", padding=PAD_DIALOG)
         self.details = tk.Text(details, height=7, wrap=tk.WORD,
                                font=tkfont.nametofont("TkFixedFont"))
         self.details.pack(fill=tk.X)
@@ -123,7 +129,7 @@ class LibraryManagerApp:
             layout=self.layout,
         )
         self.browser.pack(fill=tk.BOTH, expand=True)
-        details.pack(fill=tk.X, pady=(8, 8))
+        details.pack(fill=tk.X, pady=GAP)
 
         self.status = StatusBar(self.root)
         self.status.pack(fill=tk.X)
@@ -207,6 +213,8 @@ class LibraryManagerApp:
 
     def on_close(self) -> None:
         """Persist the layout before the window goes away."""
+        if not self._confirm_quit():
+            return
         if self._save_job is not None:
             try:
                 self.root.after_cancel(self._save_job)
@@ -216,6 +224,59 @@ class LibraryManagerApp:
         self._capture_layout()
         self.settings.save()
         self.root.destroy()
+
+    def _confirm_quit(self) -> bool:
+        """
+        Whether to go ahead and quit.
+
+        The classic two-machine failure is leaving machine A with parts that
+        were imported but never pushed, then starting work on machine B. That
+        is silent and only surfaces much later, as a part that exists in one
+        place and not the other, so it is worth one question on the way out.
+        """
+        status = self.controller.git_status(refresh=True)
+        if not status.is_repo or not status.dirty:
+            return True
+        choice = ChoiceDialog.ask(
+            self.root, "Uncommitted changes",
+            f"{status.changed_count} file(s) in this library have not been "
+            f"committed.\n\nIf you leave them here, the other machine will "
+            f"not see them.",
+            (("sync", "Commit & Push…"), ("quit", "Quit anyway"),
+             ("cancel", "Cancel")),
+            default="sync",
+        )
+        if choice == "quit":
+            return True
+        if choice == "sync":
+            self.on_sync()
+        # Anything else -- Cancel, Escape, or the sync view being closed --
+        # keeps the window open. Quitting is never the fallback for an
+        # ambiguous answer.
+        return False
+
+    def on_open_in_kicad(self) -> None:
+        """
+        Hand the file to the desktop, which routes it to the right editor.
+
+        Best-effort on purpose: there is no reliable way to know whether KiCad
+        is installed or associated with the extension, and failing to open a
+        file is not worth a dialog.
+        """
+        row = self._require_row()
+        if row is None or row.path is None:
+            return
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(row.path)])
+            elif sys.platform.startswith("win"):
+                subprocess.Popen(["cmd", "/c", "start", "", str(row.path)])
+            else:
+                subprocess.Popen(["xdg-open", str(row.path)])
+        except OSError as exc:
+            self.status.set(f"Could not open {row.path.name}: {exc}")
+            return
+        self.status.set(f"Opened {row.path.name} in the desktop's default editor.")
 
     def on_reset_layout(self) -> None:
         """
@@ -250,6 +311,8 @@ class LibraryManagerApp:
         self.item_menu.add_command(label="Rename...", command=self.on_rename)
         self.item_menu.add_command(label="Move to category...", command=self.on_move)
         self.item_menu.add_separator()
+        self.item_menu.add_command(label="Open in KiCad",
+                                   command=self.on_open_in_kicad)
         self.item_menu.add_command(label="Copy name", command=self.on_copy_name)
         self.item_menu.add_command(label="Open containing folder",
                                    command=self.on_open_folder)
@@ -286,6 +349,9 @@ class LibraryManagerApp:
         item.add_command(label="Rename...", accelerator="F2", command=self.on_rename)
         item.add_command(label="Move to category...", command=self.on_move)
         item.add_command(label="Delete...", accelerator="Del", command=self.on_delete)
+        item.add_separator()
+        item.add_command(label="Open in KiCad", command=self.on_open_in_kicad)
+        item.add_command(label="Open containing folder", command=self.on_open_folder)
         menubar.add_cascade(label="Item", menu=item)
         self.root.config(menu=menubar)
 
@@ -538,7 +604,10 @@ class LibraryManagerApp:
         self.status.set(result.summary(self.controller.root).splitlines()[0])
 
     def on_audit(self) -> None:
-        AuditDialog(self.root, self.controller, self.browser)
+        dialog = AuditDialog(self.root, self.controller, self.browser,
+                             severity=self.audit_severity)
+        self.root.wait_window(dialog)
+        self.audit_severity = dialog.severity.get()
 
     def on_package(self) -> None:
         start = self.settings.dir_for(
@@ -576,19 +645,19 @@ class AuditDialog(tk.Toplevel):
     """A filterable, copyable list of findings; double-click jumps to the item."""
 
     def __init__(self, parent: tk.Misc, controller: Controller,
-                 browser: LibraryBrowser):
+                 browser: LibraryBrowser, *, severity: str = "all"):
         super().__init__(parent)
         self.title("Library audit")
         self.geometry("1000x560")
         self.controller = controller
         self.browser = browser
 
-        body = ttk.Frame(self, padding=10)
+        body = ttk.Frame(self, padding=PAD_DIALOG)
         body.pack(fill=tk.BOTH, expand=True)
 
         controls = ttk.Frame(body)
-        controls.pack(fill=tk.X, pady=(0, 6))
-        self.severity = tk.StringVar(value="all")
+        controls.pack(fill=tk.X, pady=(0, GAP))
+        self.severity = tk.StringVar(value=severity)
         for label, value in (("All", "all"), ("Errors", check_mod.ERROR),
                              ("Warnings", check_mod.WARNING), ("Notes", check_mod.INFO)):
             ttk.Radiobutton(controls, text=label, value=value,
@@ -615,13 +684,13 @@ class AuditDialog(tk.Toplevel):
         self.tree.bind("<<TreeviewSelect>>", self._show_remedy)
 
         self.remedy = ttk.Label(body, text="", wraplength=940, justify=tk.LEFT)
-        self.remedy.pack(fill=tk.X, pady=(6, 0))
+        self.remedy.pack(fill=tk.X, pady=(GAP, 0))
 
         buttons = ttk.Frame(body)
-        buttons.pack(fill=tk.X, pady=(8, 0))
+        buttons.pack(fill=tk.X, pady=(GAP, 0))
         ttk.Button(buttons, text="Re-run", command=self._run).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Copy all",
-                   command=self._copy_all).pack(side=tk.LEFT, padx=6)
+                   command=self._copy_all).pack(side=tk.LEFT, padx=GAP)
         ttk.Button(buttons, text="Close", command=self.destroy).pack(side=tk.RIGHT)
 
         self.report: Optional[check_mod.Report] = None

@@ -25,7 +25,8 @@ from ..core import ingest as ingest_mod
 from ..core import naming
 from ..core import ops
 from .controller import Controller
-from .widgets import CategoryPicker, PlanPreview, modal
+from .widgets import (GAP, GAP_M, PAD_DIALOG, PAD_SECTION, CategoryPicker,
+                      PlanPreview, modal)
 
 COLUMNS = ("Include", "Kind", "Detected name", "New name", "Category", "Note")
 
@@ -68,20 +69,20 @@ class ImportDialog(tk.Toplevel):
 
     # -- construction -----------------------------------------------------
     def _build(self, initial_category: str) -> None:
-        outer = ttk.Frame(self, padding=10)
+        outer = ttk.Frame(self, padding=PAD_DIALOG)
         outer.pack(fill=tk.BOTH, expand=True)
 
         # Sources
-        sources = ttk.LabelFrame(outer, text="Source", padding=8)
+        sources = ttk.LabelFrame(outer, text="Source", padding=PAD_SECTION)
         sources.pack(fill=tk.X)
         ttk.Button(sources, text="Add ZIP(s)...", command=self._add_zips).pack(side=tk.LEFT)
         ttk.Button(sources, text="Add folder...", command=self._add_folder).pack(
-            side=tk.LEFT, padx=6)
+            side=tk.LEFT, padx=GAP)
         ttk.Button(sources, text="Add file(s)...", command=self._add_files).pack(side=tk.LEFT)
         ttk.Button(sources, text="Clear", command=self._clear_sources).pack(
-            side=tk.LEFT, padx=6)
+            side=tk.LEFT, padx=GAP)
         self._source_label = ttk.Label(sources, text="No source selected")
-        self._source_label.pack(side=tk.LEFT, padx=12)
+        self._source_label.pack(side=tk.LEFT, padx=GAP_M)
 
         if _HAS_DND and hasattr(self, "drop_target_register"):
             try:
@@ -92,9 +93,9 @@ class ImportDialog(tk.Toplevel):
                 pass
 
         # Default category
-        default = ttk.Frame(outer, padding=(0, 8))
+        default = ttk.Frame(outer, padding=(0, GAP))
         default.pack(fill=tk.X)
-        ttk.Label(default, text="Default category:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(default, text="Default category:").pack(side=tk.LEFT, padx=(0, GAP))
         self.category_picker = CategoryPicker(
             default, self.controller.categories(),
             validate=self.controller.validate_new_category,
@@ -104,15 +105,15 @@ class ImportDialog(tk.Toplevel):
         self.category_picker.pack(side=tk.LEFT)
 
         # Candidate table
-        table_frame = ttk.LabelFrame(outer, text="Items to import", padding=8)
+        table_frame = ttk.LabelFrame(outer, text="Items to import", padding=PAD_SECTION)
         table_frame.pack(fill=tk.BOTH, expand=True)
 
         toolbar = ttk.Frame(table_frame)
-        toolbar.pack(fill=tk.X, pady=(0, 6))
+        toolbar.pack(fill=tk.X, pady=(0, GAP))
         ttk.Button(toolbar, text="Toggle selected (Space)",
                    command=self._toggle_selected).pack(side=tk.LEFT)
         ttk.Button(toolbar, text="Apply category to selected",
-                   command=self._apply_category_to_selected).pack(side=tk.LEFT, padx=6)
+                   command=self._apply_category_to_selected).pack(side=tk.LEFT, padx=GAP)
         ttk.Label(toolbar,
                   text="Double-click a New name or Category cell to edit it").pack(
             side=tk.RIGHT)
@@ -134,10 +135,10 @@ class ImportDialog(tk.Toplevel):
         self.tree.bind("<space>", lambda _e: self._toggle_selected())
 
         # Log and progress
-        log_frame = ttk.LabelFrame(outer, text="Log", padding=8)
-        log_frame.pack(fill=tk.BOTH, expand=False, pady=(8, 0))
+        log_frame = ttk.LabelFrame(outer, text="Log", padding=PAD_SECTION)
+        log_frame.pack(fill=tk.BOTH, expand=False, pady=(GAP, 0))
         self.progress = ttk.Progressbar(log_frame, mode="determinate")
-        self.progress.pack(fill=tk.X, pady=(0, 6))
+        self.progress.pack(fill=tk.X, pady=(0, GAP))
         self.log = tk.Text(log_frame, height=6, wrap=tk.WORD,
                            font=tkfont.nametofont("TkFixedFont"))
         self.log.pack(fill=tk.BOTH, expand=True)
@@ -145,21 +146,21 @@ class ImportDialog(tk.Toplevel):
 
         # Actions
         actions = ttk.Frame(outer)
-        actions.pack(fill=tk.X, pady=(10, 0))
+        actions.pack(fill=tk.X, pady=(GAP_M, 0))
         ttk.Label(actions, text="If it already exists:").pack(side=tk.LEFT)
         self.conflict = tk.StringVar(value=ops.ConflictPolicy.SKIP.value)
         ttk.Combobox(actions, textvariable=self.conflict, state="readonly", width=12,
                      values=[p.value for p in ops.ConflictPolicy]).pack(
-            side=tk.LEFT, padx=(6, 0))
+            side=tk.LEFT, padx=(0, GAP))
 
         self.import_button = ttk.Button(actions, text="Import",
                                         command=self._do_import, state=tk.DISABLED)
         self.import_button.pack(side=tk.RIGHT)
         self.preview_button = ttk.Button(actions, text="Preview changes",
                                          command=self._do_preview, state=tk.DISABLED)
-        self.preview_button.pack(side=tk.RIGHT, padx=(0, 6))
+        self.preview_button.pack(side=tk.RIGHT, padx=(0, GAP))
         ttk.Button(actions, text="Close", command=self._close).pack(
-            side=tk.RIGHT, padx=(0, 6))
+            side=tk.RIGHT, padx=(0, GAP))
 
     # -- sources ----------------------------------------------------------
     def _start_dir(self) -> Path:

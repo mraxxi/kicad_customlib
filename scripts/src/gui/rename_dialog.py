@@ -15,7 +15,8 @@ from typing import Callable, Optional
 from ..core import naming
 from ..core import ops
 from .controller import Controller, Row
-from .widgets import CategoryPicker, PlanPreview, modal
+from .widgets import (GAP, GAP_M, PAD_DIALOG, PAD_SECTION, CategoryPicker,
+                      PlanPreview, modal)
 
 
 class _PlanDialog(tk.Toplevel):
@@ -29,7 +30,7 @@ class _PlanDialog(tk.Toplevel):
         self.geometry("760x560")
         self.minsize(560, 420)
 
-        self.body = ttk.Frame(self, padding=12)
+        self.body = ttk.Frame(self, padding=PAD_DIALOG)
         self.body.pack(fill=tk.BOTH, expand=True)
 
         self.inputs = ttk.Frame(self.body)
@@ -37,10 +38,11 @@ class _PlanDialog(tk.Toplevel):
 
         self.feedback = ttk.Label(self.body, text="", wraplength=700,
                                   justify=tk.LEFT)
-        self.feedback.pack(fill=tk.X, pady=(8, 0))
+        self.feedback.pack(fill=tk.X, pady=(GAP, 0))
 
-        preview_frame = ttk.LabelFrame(self.body, text="What will happen", padding=8)
-        preview_frame.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        preview_frame = ttk.LabelFrame(self.body, text="What will happen",
+                                       padding=PAD_SECTION)
+        preview_frame.pack(fill=tk.BOTH, expand=True, pady=(GAP, 0))
         scroll = ttk.Scrollbar(preview_frame, orient=tk.VERTICAL)
         self.preview = tk.Text(preview_frame, wrap=tk.NONE, height=14,
                                font=tkfont.nametofont("TkFixedFont"),
@@ -51,12 +53,12 @@ class _PlanDialog(tk.Toplevel):
         self.preview.config(state=tk.DISABLED)
 
         buttons = ttk.Frame(self.body)
-        buttons.pack(fill=tk.X, pady=(10, 0))
+        buttons.pack(fill=tk.X, pady=(GAP_M, 0))
         self.apply_button = ttk.Button(buttons, text="Apply", state=tk.DISABLED,
                                        command=self._apply)
         self.apply_button.pack(side=tk.RIGHT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(
-            side=tk.RIGHT, padx=(0, 6))
+            side=tk.RIGHT, padx=(0, GAP))
 
         self._plan: Optional[ops.Plan] = None
         self.bind("<Return>", lambda _e: self._apply())
@@ -117,13 +119,14 @@ class RenameDialog(_PlanDialog):
         self.row = row
 
         ttk.Label(self.inputs, text=f"Current name:").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(self.inputs, text=row.name).grid(row=0, column=1, sticky=tk.W, padx=6)
+        ttk.Label(self.inputs, text=row.name).grid(row=0, column=1, sticky=tk.W,
+                                                   padx=GAP)
 
         ttk.Label(self.inputs, text="New name:").grid(row=1, column=0, sticky=tk.W,
-                                                      pady=(6, 0))
+                                                      pady=(GAP, 0))
         self.new_name = tk.StringVar(value=row.name)
         entry = ttk.Entry(self.inputs, textvariable=self.new_name, width=40)
-        entry.grid(row=1, column=1, sticky=tk.EW, padx=6, pady=(6, 0))
+        entry.grid(row=1, column=1, sticky=tk.EW, padx=GAP, pady=(GAP, 0))
         entry.focus_set()
         entry.selection_range(0, tk.END)
 
@@ -133,14 +136,14 @@ class RenameDialog(_PlanDialog):
                 self.inputs,
                 text="Also rename the 3D model file to match",
                 variable=self.rename_model, command=self._rebuild,
-            ).grid(row=2, column=1, sticky=tk.W, padx=6, pady=(6, 0))
+            ).grid(row=2, column=1, sticky=tk.W, padx=GAP, pady=(GAP, 0))
 
         self.conflict = tk.StringVar(value=ops.ConflictPolicy.SKIP.value)
         ttk.Label(self.inputs, text="If the target exists:").grid(
-            row=3, column=0, sticky=tk.W, pady=(6, 0))
+            row=3, column=0, sticky=tk.W, pady=(GAP, 0))
         ttk.Combobox(self.inputs, textvariable=self.conflict, state="readonly",
                      width=12, values=[p.value for p in ops.ConflictPolicy]).grid(
-            row=3, column=1, sticky=tk.W, padx=6, pady=(6, 0))
+            row=3, column=1, sticky=tk.W, padx=GAP, pady=(GAP, 0))
 
         self.inputs.columnconfigure(1, weight=1)
         self.new_name.trace_add("write", lambda *_a: self._rebuild())
@@ -168,23 +171,23 @@ class MoveDialog(_PlanDialog):
 
         ttk.Label(self.inputs, text="Item:").grid(row=0, column=0, sticky=tk.W)
         ttk.Label(self.inputs, text=f"{row.category}:{row.name}").grid(
-            row=0, column=1, sticky=tk.W, padx=6)
+            row=0, column=1, sticky=tk.W, padx=GAP)
 
         ttk.Label(self.inputs, text="Move to:").grid(row=1, column=0, sticky=tk.W,
-                                                     pady=(6, 0))
+                                                     pady=(GAP, 0))
         self.picker = CategoryPicker(
             self.inputs, [c for c in controller.categories() if c != row.category],
             validate=controller.validate_new_category,
             on_change=lambda _n: self._rebuild(),
         )
-        self.picker.grid(row=1, column=1, sticky=tk.W, padx=6, pady=(6, 0))
+        self.picker.grid(row=1, column=1, sticky=tk.W, padx=GAP, pady=(GAP, 0))
 
         self.conflict = tk.StringVar(value=ops.ConflictPolicy.SKIP.value)
         ttk.Label(self.inputs, text="If the target exists:").grid(
-            row=2, column=0, sticky=tk.W, pady=(6, 0))
+            row=2, column=0, sticky=tk.W, pady=(GAP, 0))
         ttk.Combobox(self.inputs, textvariable=self.conflict, state="readonly",
                      width=12, values=[p.value for p in ops.ConflictPolicy]).grid(
-            row=2, column=1, sticky=tk.W, padx=6, pady=(6, 0))
+            row=2, column=1, sticky=tk.W, padx=GAP, pady=(GAP, 0))
 
         self.inputs.columnconfigure(1, weight=1)
         self.conflict.trace_add("write", lambda *_a: self._rebuild())
@@ -209,13 +212,14 @@ class CategoryRenameDialog(_PlanDialog):
         self.category = category
 
         ttk.Label(self.inputs, text="Category:").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(self.inputs, text=category).grid(row=0, column=1, sticky=tk.W, padx=6)
+        ttk.Label(self.inputs, text=category).grid(row=0, column=1, sticky=tk.W,
+                                                   padx=GAP)
 
         ttk.Label(self.inputs, text="New name:").grid(row=1, column=0, sticky=tk.W,
-                                                      pady=(6, 0))
+                                                      pady=(GAP, 0))
         self.new_name = tk.StringVar(value=category)
         entry = ttk.Entry(self.inputs, textvariable=self.new_name, width=40)
-        entry.grid(row=1, column=1, sticky=tk.EW, padx=6, pady=(6, 0))
+        entry.grid(row=1, column=1, sticky=tk.EW, padx=GAP, pady=(GAP, 0))
         entry.focus_set()
         entry.selection_range(0, tk.END)
 

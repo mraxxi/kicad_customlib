@@ -13,8 +13,9 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, List, Optional
 
-from .controller import COLUMNS, KIND_FOOTPRINT, KIND_MODEL, KIND_SYMBOL, Controller, Row
-from .widgets import SortableTree
+from .controller import (COLUMNS, KIND_FOOTPRINT, KIND_MODEL, KIND_SYMBOL,
+                         Controller, Row)
+from .widgets import GAP, GAP_M, GAP_XS, SortableTree
 
 ALL_CATEGORIES = "[All categories]"
 
@@ -55,6 +56,7 @@ class LibraryBrowser(ttk.Frame):
         self.kind = tk.StringVar(value=KIND_SYMBOL)
         self.search = tk.StringVar(value="")
         self._rows: List[Row] = []
+        self._showing_empty = False
 
         self._build()
         self.refresh()
@@ -68,34 +70,41 @@ class LibraryBrowser(ttk.Frame):
         paned.bind("<ButtonRelease-1>", self._remember_sash, add="+")
 
         # Categories
-        left = ttk.Frame(paned, padding=4)
+        left = ttk.Frame(paned, padding=GAP_XS)
         paned.add(left, weight=1)
-        ttk.Label(left, text="Categories").pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(left, text="Categories").pack(anchor=tk.W, pady=(0, GAP_XS))
         self.category_list = tk.Listbox(left, exportselection=False, activestyle="none")
         self.category_list.pack(fill=tk.BOTH, expand=True)
         self.category_list.bind("<<ListboxSelect>>", self._on_category_chosen)
         self.category_list.bind("<Button-3>", self._category_context)
 
         # Items
-        right = ttk.Frame(paned, padding=4)
+        right = ttk.Frame(paned, padding=GAP_XS)
         paned.add(right, weight=3)
 
         controls = ttk.Frame(right)
-        controls.pack(fill=tk.X, pady=(0, 6))
+        controls.pack(fill=tk.X, pady=(0, GAP))
         for label, value in (("Symbols", KIND_SYMBOL),
                              ("Footprints", KIND_FOOTPRINT),
                              ("3D models", KIND_MODEL)):
             ttk.Radiobutton(controls, text=label, value=value, variable=self.kind,
                             command=self._on_kind_chosen).pack(side=tk.LEFT)
-        ttk.Label(controls, text="Search:").pack(side=tk.LEFT, padx=(14, 4))
+        ttk.Label(controls, text="Search:").pack(side=tk.LEFT, padx=(GAP_M, GAP_XS))
         self.search_entry = ttk.Entry(controls, textvariable=self.search, width=28)
         self.search_entry.pack(side=tk.LEFT)
         self.search.trace_add("write", lambda *_a: self.refresh_items())
         ttk.Button(controls, text="Clear",
-                   command=lambda: self.search.set("")).pack(side=tk.LEFT, padx=4)
+                   command=lambda: self.search.set("")).pack(side=tk.LEFT, padx=GAP_XS)
 
-        holder = ttk.Frame(right)
+        self.table_holder = holder = ttk.Frame(right)
         holder.pack(fill=tk.BOTH, expand=True)
+        # Shown in the table's place when there are no rows: a blank table
+        # looks identical whether the library is empty, the category is
+        # empty, or the search matched nothing.
+        self.empty_label = ttk.Label(
+            holder, text="", justify=tk.LEFT, anchor=tk.NW, wraplength=520,
+            padding=GAP_M,
+        )
         scroll = ttk.Scrollbar(holder, orient=tk.VERTICAL)
         self.tree = SortableTree(holder, COLUMNS[KIND_SYMBOL],
                                  yscrollcommand=scroll.set, selectmode="extended")
@@ -162,7 +171,38 @@ class LibraryBrowser(ttk.Frame):
             kind, category=self.selected_category(), search=self.search.get()
         )
         self.tree.repopulate(self._rows)
+        self._show_empty_state()
         self._selection_changed()
+
+    def _show_empty_state(self) -> None:
+        """
+        Swap the table for an explanation, and back again.
+
+        Which of the two is showing is tracked here rather than read back
+        with `winfo_ismapped()`: a widget in an unmapped window reports 0
+        whether it is packed or not, and `refresh_items()` runs during
+        construction, before anything is mapped. Asking Tk would have left
+        the placeholder stuck in place the first time rows appeared.
+        """
+        if self._rows:
+            if self._showing_empty:
+                self.empty_label.pack_forget()
+                self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                self._showing_empty = False
+            return
+        self.empty_label.config(text=self.controller.empty_state_message(
+            self.kind.get(), category=self.selected_category(),
+            search=self.search.get(),
+        ))
+        if not self._showing_empty:
+            self.tree.pack_forget()
+            self.empty_label.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            self._showing_empty = True
+
+    @property
+    def empty_state_text(self) -> str:
+        """What the placeholder currently says; "" when the table is showing."""
+        return self.empty_label.cget("text") if self._showing_empty else ""
 
     # -- user actions that change the view ---------------------------------
     def _on_kind_chosen(self) -> None:

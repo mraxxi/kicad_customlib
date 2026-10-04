@@ -157,6 +157,18 @@ gui/
   import_dialog.py, rename_dialog.py, app.py
 ```
 
+Two GUI conventions, both enforced by tests:
+
+* **Paddings come from the 8px grid in `widgets.py`** (`PAD_DIALOG`,
+  `PAD_SECTION`, `PAD_BAR`, `GAP`, `GAP_XS`, `GAP_M`). A non-zero numeric
+  `padding=`/`pady=`/`padx=` anywhere in `gui/` fails
+  `test_no_module_hardcodes_a_padding`.
+* **Never ask Tk whether your own widget is showing.** `winfo_ismapped()`
+  returns 0 for a correctly packed widget in a window that has not been
+  mapped yet, and construction-time code runs before mapping. Track the state
+  in an attribute instead -- the sash restore, the layout capture and the
+  empty-state swap were each broken by this.
+
 ---
 
 ## 4. Standard procedures

@@ -11,6 +11,7 @@ an ops.Plan for the user to look at before it runs.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -397,6 +398,37 @@ class Controller:
             intake = self.root / "staging-temp" / "intake"
             return intake if intake.is_dir() else self.root
         return self.root
+
+    def empty_state_message(
+        self, kind: str, *, category: Optional[str] = None, search: str = ""
+    ) -> str:
+        """
+        What to say instead of a blank table, and "" when there is nothing
+        to say because the table has rows.
+
+        A blank table is ambiguous: it looks the same whether the library is
+        empty, the category is empty, or the search matched nothing, and in
+        the first case it gives the user nowhere to start.
+        """
+        if search.strip():
+            where = f" in {category}" if category else ""
+            return f"Nothing{where} matches \u201c{search.strip()}\u201d."
+
+        plural = {KIND_SYMBOL: "symbols", KIND_FOOTPRINT: "footprints",
+                  KIND_MODEL: "3D models"}.get(kind, kind)
+
+        if not self.lib.categories:
+            intake = Path("staging-temp") / "intake"
+            return (f"This library is empty.\n\n"
+                    f"Click Import\u2026 to bring in a vendor ZIP, folder or file, "
+                    f"or drop <Category>/ folders into {intake}{os.sep} and use "
+                    f"Process staging.")
+        if category:
+            return (f"{category} holds no {plural}.\n\n"
+                    f"Right-click the category to import into it. A "
+                    f"symbol-only or footprint-only category is normal.")
+        return (f"This library holds no {plural} yet.\n\n"
+                f"Click Import\u2026 to add some.")
 
     # -- category validation ----------------------------------------------
     def validate_new_category(self, name: str) -> Tuple[bool, str]:

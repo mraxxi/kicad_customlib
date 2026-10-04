@@ -82,10 +82,11 @@ finding.
 
 ### After pulling on the other machine
 ```bash
-python scripts/lib_manager.py check
+python scripts/lib_manager.py sync pull     # fast-forward, then audit
 ```
-If it reports `table-stale`, someone committed library files without
-regenerating the tables:
+`sync pull` runs `check` on what arrived, which is the point: a part committed
+on one machine without regenerating the tables looks fine there and fails to
+load here. If it reports `table-stale`:
 ```bash
 python scripts/lib_manager.py generate --yes
 ```
@@ -166,6 +167,36 @@ discarding rows you configured by hand (backing them up first), and lists
 separately everything it could not provide — normally parts from KiCad's own
 libraries.
 
+### Sync between the two machines
+
+```bash
+python scripts/lib_manager.py sync status            # --json for scripts
+python scripts/lib_manager.py sync fetch
+python scripts/lib_manager.py sync pull              # fast-forward, then audit
+python scripts/lib_manager.py sync commit --yes      # message from the diff
+python scripts/lib_manager.py sync push              # audits first
+```
+
+`sync status` reduces the repository to one word — `in_sync`, `ahead`,
+`behind`, `diverged`, `dirty`, `detached`, `no_upstream`, `unmerged`,
+`operation_in_progress` — lists the incoming and outgoing commits, and says
+which actions are currently unavailable and why.
+
+`sync commit` writes a message describing what actually changed (`Add 3
+symbols to Conn_XT`, `Regenerate master library tables`) rather than "Update
+files"; `-m` overrides it. `sync push` runs the audit first and refuses on
+errors; `--skip-check` overrides that, for parking work in progress on the
+remote.
+
+**What it will not do.** There is no force push, reset, checkout, stash,
+rebase, explicit merge, clean or gc anywhere in the tool — every one of those
+can discard work that exists in no other clone, which on a two-machine library
+means losing it outright. A diverged branch or a conflict is reported, with
+the reason, and left for a terminal.
+
+The reported fetch age matters: ahead/behind is counted against the
+remote-tracking ref, so the numbers are only as current as the last `fetch`.
+
 ---
 
 ## The desktop app
@@ -187,11 +218,43 @@ python scripts/lib_manager.py          # or: lib_manager.py gui
   bundled, then run it.
 * A banner appears whenever the master tables fall out of date.
 
-Shortcuts: `Ctrl+I` import, `F2` rename, `Del` delete, `Ctrl+F` search,
-`F5` refresh.
+### The git strip and the sync view
 
-Preferences are stored in `~/.config/kicad_customlib/gui.json`, outside the
+Under the toolbar, always visible when the library is a git repository:
+
+```
+main · b6c9373 · ↑2 ↓0 · 3 changed · fetched 4 min ago        [Sync…]
+```
+
+`Sync…` (or `Ctrl+R`) opens the detail: the upstream and its URL, HEAD, the
+incoming and outgoing commits, the working tree grouped by status, a commit
+message prefilled from the diff, and git's raw output in a copyable log.
+
+* Fetch · Pull · Commit · Commit & Push · Push. **A disabled action always
+  says why**, in a sentence next to the button — "commit them first", "the
+  branch has diverged, reconcile it in a terminal".
+* The audit runs as soon as the view opens. Errors hold the push back behind
+  an explicit `Push anyway (N error(s))`, never remembered between openings.
+* A pull re-scans the library, refreshes the browser and re-runs the audit.
+* Every git call runs on a worker thread, one at a time, so the window stays
+  responsive and two git commands never contend for the index lock.
+* Quitting with uncommitted library changes asks first, offering
+  *Commit & Push* / *Quit anyway* / *Cancel* — the classic two-machine
+  failure is leaving parts behind on the machine you walked away from.
+
+Shortcuts: `Ctrl+I` import, `F2` rename, `Del` delete, `Ctrl+F` search,
+`F5` refresh, `Ctrl+R` sync, `Ctrl+Q` quit.
+
+Window sizes, the panel split, column widths, the sort and the last category
+are remembered per screen resolution, so attaching a second monitor does not
+inherit a layout sized for the first. *Library → Reset window layout* clears
+them. Preferences live in `~/.config/kicad_customlib/gui.json`, outside the
 repository.
+
+On Linux the file dialogs use `kdialog` (the real Plasma dialog) if it is
+installed, then `zenity`, then Tk's own. `pacman -S kdialog` is worth it on
+KDE. Colours come from the desktop's own scheme where `kdeglobals` can be
+read.
 
 If Tk is missing the app says how to install it (`pacman -S tk`,
 `apt install python3-tk`, …). Everything is available from the CLI regardless.

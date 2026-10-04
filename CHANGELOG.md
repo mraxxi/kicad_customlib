@@ -5,6 +5,46 @@ tracked by git history, not here.
 
 ## [Unreleased]
 
+### GUI plan Phase 5 — Polish
+- **Quitting with uncommitted library changes asks first**, offering
+  *Commit & Push* / *Quit anyway* / *Cancel*. The classic two-machine failure
+  is walking away from machine A with parts that were imported but never
+  pushed; it is silent, and only surfaces much later as a part that exists in
+  one place and not the other. Dismissing the question keeps the window open —
+  quitting is never the fallback for an ambiguous answer.
+- New `widgets.ChoiceDialog`, because `messagebox` tops out at Yes/No/Cancel,
+  whose labels say nothing about what each one does, and this question has
+  three answers that each need naming.
+- **Empty-state guidance** replaces a blank table. A blank table looks
+  identical whether the library is empty, the category is empty, or the search
+  matched nothing — and in the first case gives the user nowhere to start. The
+  wording is a Controller decision (`empty_state_message`) and so is tested
+  headlessly. Which of table and placeholder is showing is tracked explicitly
+  rather than read back with `winfo_ismapped()`, which reports 0 for a packed
+  widget in a window that has not been mapped yet; asking Tk would have left
+  the placeholder stuck in place the first time rows appeared.
+- **"Open in KiCad"** on the item menu, handing the file to `xdg-open` /
+  `open` / `start` so the desktop routes it to the right editor. Best-effort:
+  a failure goes to the status bar, not a dialog, because there is no reliable
+  way to know whether KiCad is installed.
+- The audit dialog's severity filter survives closing and reopening within a
+  session. Not written to disk: it is about the task in hand, not a
+  preference.
+- **Spacing pass.** The ad-hoc `(10, 8)` / `(8, 4)` / `12` / `4` paddings are
+  replaced by named constants on an 8px grid, defined once in `widgets.py`. A
+  test asserts no GUI module contains a non-zero numeric padding, so the next
+  widget cannot be a fresh guess.
+- `SyncDialog` now stops its poll loop on destroy. A worker can still be in a
+  git call when the view is closed, with an `after` tick already scheduled;
+  without the guard the next tick called into a destroyed widget and Tk
+  printed a traceback over whatever the user was doing.
+- The Tk test fixtures collect garbage before destroying the interpreter.
+  `tkinter.Variable.__del__` unsets a Tcl variable, so one still awaiting
+  collection when the interpreter goes away raised "main thread is not in main
+  loop" later, and pytest reported it against whichever unrelated test
+  happened to trigger the collection — 13 failures scattered across five
+  files, none of them in the code that caused it.
+
 ### GUI plan Phase 4 — Git in the interface
 - A always-visible strip under the toolbar:
   `main · b6c9373 · ↑2 ↓0 · 3 changed · fetched 4 min ago   [Sync…]`. It is

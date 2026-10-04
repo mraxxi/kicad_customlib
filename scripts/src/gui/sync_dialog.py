@@ -37,13 +37,12 @@ from ..core import check as check_mod
 from ..core import vcs
 from . import settings as st
 from .controller import Controller
-from .widgets import modal
+from .widgets import GAP, GAP_XS, PAD_DIALOG, PAD_SECTION, modal
 
 DEFAULT_GEOMETRY = "980x760"
 MIN_WIDTH = 760
 MIN_HEIGHT = 600
 
-PAD = 8
 POLL_MS = 50
 
 # Job names, used as the queue's discriminator and in the log.
@@ -75,12 +74,13 @@ class SyncDialog(tk.Toplevel):
         self._queue: "queue.Queue[Tuple[str, str, object]]" = queue.Queue()
         self._worker: Optional[threading.Thread] = None
         self._busy = ""
+        self._closed = False
         # Audit errors, once known. None means "not audited yet", which is a
         # different thing from "no errors" and the push row says so.
         self._audit_errors: Optional[List[check_mod.Finding]] = None
         self._message_edited = False
 
-        body = ttk.Frame(self, padding=PAD)
+        body = ttk.Frame(self, padding=PAD_DIALOG)
         body.pack(fill=tk.BOTH, expand=True)
         self._build_header(body)
         self._build_tabs(body)
@@ -124,6 +124,18 @@ class SyncDialog(tk.Toplevel):
         self._remember_geometry()
         self.destroy()
 
+    def destroy(self) -> None:
+        """
+        Stop the poll loop before the widget goes away.
+
+        A worker thread can still be in a git call when the view is closed,
+        and the `after` callback is already scheduled. Without this the next
+        tick calls into a destroyed widget and Tk prints a traceback over
+        whatever the user is doing. The thread's result is simply discarded.
+        """
+        self._closed = True
+        super().destroy()
+
     # -- construction ------------------------------------------------------
     @staticmethod
     def _bold() -> tkfont.Font:
@@ -132,7 +144,7 @@ class SyncDialog(tk.Toplevel):
         return f
 
     def _build_header(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="Repository", padding=PAD)
+        frame = ttk.LabelFrame(parent, text="Repository", padding=PAD_SECTION)
         frame.pack(fill=tk.X)
         frame.columnconfigure(1, weight=1)
 
@@ -145,7 +157,7 @@ class SyncDialog(tk.Toplevel):
             ("fetched", "Fetched"),
         )):
             ttk.Label(frame, text=f"{label}:").grid(
-                row=row, column=0, sticky=tk.W, padx=(0, PAD))
+                row=row, column=0, sticky=tk.W, padx=(0, GAP))
             var = tk.StringVar(value="")
             widget = ttk.Label(frame, textvariable=var, anchor=tk.W)
             widget.grid(row=row, column=1, sticky=tk.EW)
@@ -156,7 +168,7 @@ class SyncDialog(tk.Toplevel):
 
     def _build_tabs(self, parent: ttk.Frame) -> None:
         self.tabs = ttk.Notebook(parent)
-        self.tabs.pack(fill=tk.BOTH, expand=True, pady=(PAD, 0))
+        self.tabs.pack(fill=tk.BOTH, expand=True, pady=(GAP, 0))
 
         self.incoming_list = self._commit_list(self.tabs)
         self.outgoing_list = self._commit_list(self.tabs)
@@ -169,7 +181,7 @@ class SyncDialog(tk.Toplevel):
         self.tabs.add(self.log.master, text="Log")
 
     def _scrolled(self, parent: tk.Misc) -> ttk.Frame:
-        return ttk.Frame(parent, padding=PAD)
+        return ttk.Frame(parent, padding=PAD_DIALOG)
 
     def _commit_list(self, parent: tk.Misc) -> ttk.Treeview:
         holder = self._scrolled(parent)
@@ -212,15 +224,15 @@ class SyncDialog(tk.Toplevel):
         return text
 
     def _build_commit(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="Commit message", padding=PAD)
-        frame.pack(fill=tk.X, pady=(PAD, 0))
+        frame = ttk.LabelFrame(parent, text="Commit message", padding=PAD_SECTION)
+        frame.pack(fill=tk.X, pady=(GAP, 0))
         self.message = tk.Text(frame, height=4, wrap=tk.WORD)
         self.message.pack(fill=tk.X)
         # Any keystroke means the user owns the message from then on, and a
         # refresh must not overwrite what they typed.
         self.message.bind("<Key>", self._on_message_key)
         row = ttk.Frame(frame)
-        row.pack(fill=tk.X, pady=(PAD // 2, 0))
+        row.pack(fill=tk.X, pady=(GAP_XS, 0))
         self.suggest_button = ttk.Button(row, text="Use suggested message",
                                         command=self._use_suggestion)
         self.suggest_button.pack(side=tk.LEFT)
@@ -228,7 +240,7 @@ class SyncDialog(tk.Toplevel):
         self.files_label.pack(side=tk.RIGHT)
 
     def _build_actions(self, parent: ttk.Frame) -> None:
-        frame = ttk.Frame(parent, padding=(0, PAD, 0, 0))
+        frame = ttk.Frame(parent, padding=(0, GAP, 0, 0))
         frame.pack(fill=tk.X)
         frame.columnconfigure(1, weight=1)
 
@@ -243,10 +255,10 @@ class SyncDialog(tk.Toplevel):
         )
         for index, (key, label, command) in enumerate(rows):
             button = ttk.Button(frame, text=label, width=16, command=command)
-            button.grid(row=index, column=0, sticky=tk.W, pady=1)
+            button.grid(row=index, column=0, sticky=tk.W)
             reason = ttk.Label(frame, text="", anchor=tk.W, wraplength=640,
                                justify=tk.LEFT)
-            reason.grid(row=index, column=1, sticky=tk.EW, padx=(PAD, 0))
+            reason.grid(row=index, column=1, sticky=tk.EW, padx=(GAP, 0))
             self.buttons[key] = button
             self.reasons[key] = reason
 
@@ -256,15 +268,15 @@ class SyncDialog(tk.Toplevel):
             command=self._update_actions,
         )
         self.push_anyway_check.grid(row=len(rows), column=0, columnspan=2,
-                                    sticky=tk.W, pady=(PAD // 2, 0))
+                                    sticky=tk.W, pady=(GAP_XS, 0))
 
         closing = ttk.Frame(parent)
-        closing.pack(fill=tk.X, pady=(PAD, 0))
+        closing.pack(fill=tk.X, pady=(GAP, 0))
         self.busy_label = ttk.Label(closing, text="")
         self.busy_label.pack(side=tk.LEFT)
         ttk.Button(closing, text="Close", command=self._close).pack(side=tk.RIGHT)
         ttk.Button(closing, text="Refresh",
-                   command=self.refresh).pack(side=tk.RIGHT, padx=(0, PAD // 2))
+                   command=self.refresh).pack(side=tk.RIGHT, padx=(0, GAP_XS))
 
     # -- rendering ---------------------------------------------------------
     def refresh(self) -> None:
@@ -419,7 +431,7 @@ class SyncDialog(tk.Toplevel):
         repository contend for the index lock, and the second fails with
         something no user should have to read.
         """
-        if self._busy:
+        if self._busy or self._closed:
             return False
         self._busy = job
 
@@ -435,6 +447,8 @@ class SyncDialog(tk.Toplevel):
         return True
 
     def _drain_queue(self) -> None:
+        if self._closed:
+            return
         try:
             while True:
                 job, kind, payload = self._queue.get_nowait()
@@ -447,7 +461,7 @@ class SyncDialog(tk.Toplevel):
                 self._update_actions()
         except queue.Empty:
             pass
-        if self.winfo_exists():
+        if not self._closed:
             self.after(POLL_MS, self._drain_queue)
 
     def _finish(self, job: str, payload: object) -> None:

@@ -19,6 +19,23 @@ from . import theme
 
 NEW_CATEGORY_BUTTON = "New…"
 
+# Spacing, on an 8px grid, defined once.
+#
+# These replace the ad-hoc (10, 8) / (8, 4) / 12 / 4 paddings that had
+# accumulated: nothing lined up between panels, and every new widget was a
+# fresh guess. The names say what a value is for rather than how big it is,
+# so the grid can be retuned in one place.
+SPACE_XS = 4
+SPACE_S = 8
+SPACE_M = 16
+
+PAD_DIALOG = SPACE_S          # inside a dialog's body frame
+PAD_SECTION = SPACE_S         # inside a LabelFrame
+PAD_BAR = (SPACE_S, SPACE_XS)  # a horizontal strip: wider than tall
+GAP = SPACE_S                 # between sibling widgets
+GAP_XS = SPACE_XS             # between tightly related widgets
+GAP_M = SPACE_M               # between groups
+
 
 def apply_scaling(root: tk.Misc) -> None:
     """Make the interface usable on a HiDPI display."""
@@ -51,7 +68,7 @@ class StatusBar(ttk.Frame):
     """
 
     def __init__(self, parent: tk.Misc):
-        super().__init__(parent, padding=(8, 4))
+        super().__init__(parent, padding=PAD_BAR)
         self._var = tk.StringVar(value="Ready")
         self._label = ttk.Label(self, textvariable=self._var, anchor=tk.W)
         self._label.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -64,6 +81,63 @@ class StatusBar(ttk.Frame):
 
     def set_counts(self, summary: str) -> None:
         self._detail.set(summary)
+
+
+class ChoiceDialog(tk.Toplevel):
+    """
+    A question with more than two answers.
+
+    `messagebox` tops out at Yes/No/Cancel, whose labels say nothing about
+    what each one does -- and the question this exists for ("you have
+    uncommitted parts; commit and push, quit anyway, or stay?") has three
+    answers that each need naming. `choice` is the key of the button pressed,
+    or None if the window was closed, so dismissing is never taken as an
+    answer.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        title: str,
+        message: str,
+        choices: Sequence[Tuple[str, str]],
+        *,
+        default: Optional[str] = None,
+    ):
+        super().__init__(parent)
+        self.title(title)
+        self.choice: Optional[str] = None
+
+        body = ttk.Frame(self, padding=PAD_DIALOG * 2)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text=message, wraplength=460, justify=tk.LEFT).pack(
+            anchor=tk.W)
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill=tk.X, pady=(GAP_M, 0))
+        # Packed right-to-left, so the first choice given ends up rightmost,
+        # where the platform puts the affirmative action.
+        for key, label in reversed(list(choices)):
+            button = ttk.Button(buttons, text=label,
+                               command=lambda k=key: self._pick(k))
+            button.pack(side=tk.RIGHT, padx=(GAP_XS, 0))
+            if key == default:
+                button.focus_set()
+
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.resizable(False, False)
+        modal(self, parent)
+
+    def _pick(self, key: str) -> None:
+        self.choice = key
+        self.destroy()
+
+    @classmethod
+    def ask(cls, parent: tk.Misc, title: str, message: str,
+            choices: Sequence[Tuple[str, str]], **kw) -> Optional[str]:
+        dialog = cls(parent, title, message, choices, **kw)
+        parent.wait_window(dialog)
+        return dialog.choice
 
 
 class CategoryPicker(ttk.Frame):
@@ -106,10 +180,10 @@ class CategoryPicker(ttk.Frame):
         self._new_button = ttk.Button(
             self, text=NEW_CATEGORY_BUTTON, width=7, command=self._prompt_new
         )
-        self._new_button.pack(side=tk.LEFT, padx=(4, 0))
+        self._new_button.pack(side=tk.LEFT, padx=(GAP_XS, 0))
 
         self._hint = ttk.Label(self, text="", wraplength=360, justify=tk.LEFT)
-        self._hint.pack(side=tk.LEFT, padx=(8, 0))
+        self._hint.pack(side=tk.LEFT, padx=(GAP, 0))
 
     def _choices(self) -> List[str]:
         return list(self._categories)
@@ -130,24 +204,24 @@ class CategoryPicker(ttk.Frame):
     def _prompt_new(self) -> None:
         dialog = tk.Toplevel(self)
         dialog.title("New category")
-        body = ttk.Frame(dialog, padding=12)
+        body = ttk.Frame(dialog, padding=PAD_DIALOG)
         body.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(body, text="Category name:").grid(row=0, column=0, sticky=tk.W)
         entry_var = tk.StringVar()
         entry = ttk.Entry(body, textvariable=entry_var, width=38)
-        entry.grid(row=1, column=0, sticky=tk.EW, pady=(2, 6))
+        entry.grid(row=1, column=0, sticky=tk.EW, pady=(GAP_XS, GAP))
         entry.focus_set()
 
         feedback = ttk.Label(body, text="", wraplength=380, justify=tk.LEFT)
         feedback.grid(row=2, column=0, sticky=tk.W)
 
         buttons = ttk.Frame(body)
-        buttons.grid(row=3, column=0, sticky=tk.E, pady=(10, 0))
+        buttons.grid(row=3, column=0, sticky=tk.E, pady=(GAP_M, 0))
         create = ttk.Button(buttons, text="Create", state=tk.DISABLED)
         create.pack(side=tk.RIGHT)
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(
-            side=tk.RIGHT, padx=(0, 6)
+            side=tk.RIGHT, padx=(0, GAP)
         )
 
         def revalidate(*_a) -> None:
@@ -203,14 +277,14 @@ class PlanPreview(tk.Toplevel):
         self.geometry("820x520")
         self.minsize(560, 320)
 
-        body = ttk.Frame(self, padding=10)
+        body = ttk.Frame(self, padding=PAD_DIALOG)
         body.pack(fill=tk.BOTH, expand=True)
 
         header = (
             f"{len(plan.operations)} operation(s), "
             f"{len(plan.warnings)} warning(s), {len(plan.conflicts)} conflict(s)"
         )
-        ttk.Label(body, text=header).pack(anchor=tk.W, pady=(0, 6))
+        ttk.Label(body, text=header).pack(anchor=tk.W, pady=(0, GAP))
 
         text_frame = ttk.Frame(body)
         text_frame.pack(fill=tk.BOTH, expand=True)
@@ -226,11 +300,11 @@ class PlanPreview(tk.Toplevel):
         text.config(state=tk.DISABLED)   # readable and copyable, not editable
 
         buttons = ttk.Frame(body)
-        buttons.pack(fill=tk.X, pady=(10, 0))
+        buttons.pack(fill=tk.X, pady=(GAP_M, 0))
         apply_button = ttk.Button(buttons, text=apply_label, command=self._accept)
         apply_button.pack(side=tk.RIGHT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(
-            side=tk.RIGHT, padx=(0, 6)
+            side=tk.RIGHT, padx=(0, GAP)
         )
         if plan.is_empty:
             apply_button.config(state=tk.DISABLED)
@@ -396,7 +470,7 @@ class GitStrip(ttk.Frame):
     ALARMING = ("operation_in_progress", "unmerged", "detached", "diverged")
 
     def __init__(self, parent: tk.Misc, *, on_open: Callable[[], None]):
-        super().__init__(parent, padding=(10, 4))
+        super().__init__(parent, padding=PAD_BAR)
         self._text = tk.StringVar(value="")
         self._label = ttk.Label(self, textvariable=self._text, anchor=tk.W)
         self._label.pack(side=tk.LEFT, fill=tk.X, expand=True)

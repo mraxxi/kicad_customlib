@@ -224,10 +224,27 @@ needs_tk = [
 
 @pytest.fixture
 def tk_root():
+    """
+    The gc.collect() before destroy() is not superstition. tkinter.Variable
+    defines __del__, which unsets the Tcl variable; if one is still waiting
+    to be collected when the interpreter goes away, that __del__ raises
+    "main thread is not in main loop" later, during whichever unrelated test
+    happens to trigger the collection. Collecting here keeps a leak from one
+    Tk test from being reported as a failure in another file.
+    """
+    import gc
+
     root = tk.Tk()
     root.withdraw()
     yield root
+    for window in root.winfo_children():
+        try:
+            window.destroy()
+        except tk.TclError:
+            pass
+    gc.collect()
     root.destroy()
+    gc.collect()
 
 
 @pytest.fixture
@@ -546,3 +563,17 @@ class TestSyncDialog:
             assert "audit" in dialog.busy_label.cget("text")
         finally:
             dialog.destroy()
+
+    def test_closing_mid_job_stops_the_poll_loop(self, tk_root, control):
+        """
+        A worker can still be in a git call when the view is closed, with an
+        `after` tick already scheduled. Without the guard the next tick calls
+        into a destroyed widget and Tk prints a traceback over whatever the
+        user is doing.
+        """
+        from src.gui.sync_dialog import SyncDialog
+        dialog = SyncDialog(tk_root, control)
+        dialog.destroy()
+        assert dialog._closed is True
+        dialog._drain_queue()                      # must not raise
+        assert dialog._start("fetch", lambda: None) is False
