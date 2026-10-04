@@ -104,18 +104,11 @@ class LibraryBrowser(ttk.Frame):
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         # A row with a problem is marked by an underline rather than a colour,
         # so it reads the same in a light or a dark theme.
-        self.tree.tag_configure("problem", font=self._underlined())
+        self.tree.configure_appearance()
         self.tree.bind("<ButtonRelease-1>", self._remember_columns, add="+")
         self.tree.bind("<<TreeviewSelect>>", self._selection_changed)
         self.tree.bind("<Double-1>", self._activate)
         self.tree.bind("<Button-3>", self._item_context)
-
-    @staticmethod
-    def _underlined():
-        from tkinter import font as tkfont
-        f = tkfont.nametofont("TkDefaultFont").copy()
-        f.configure(underline=True)
-        return f
 
     # -- data -------------------------------------------------------------
     def restore_view(self) -> None:
@@ -157,7 +150,7 @@ class LibraryBrowser(ttk.Frame):
         widths = self.layout.columns(kind) if self.layout else {}
         self.tree.set_columns(COLUMNS[kind], widths=widths,
                               defaults=DEFAULT_WIDTHS.get(kind))
-        self.tree.tag_configure("problem", font=self._underlined())
+        self.tree.configure_appearance()
         if self.layout:
             column, reverse = self.layout.sort()
             self.tree.apply_sort(column, reverse)

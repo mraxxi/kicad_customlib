@@ -5,6 +5,84 @@ tracked by git history, not here.
 
 ## [Unreleased]
 
+### GUI plan Phase 2 — File dialogs and appearance
+- New `gui/filepicker.py`. On Linux `tkinter.filedialog` is not native — Tk
+  draws its own Motif-era widget — so the picker now prefers `kdialog` (the
+  real Plasma dialog), then `zenity`, then Tk. Both are optional external
+  binaries, not Python dependencies. A helper that fails is remembered and not
+  retried for the rest of the session, cancel (exit 1) is distinguished from
+  failure, and the Tk window keeps repainting while a helper is open.
+  `KICAD_CUSTOMLIB_FILEPICKER` forces a backend. Windows and macOS keep Tk,
+  where it already is the platform dialog.
+- Dialogs open somewhere sensible. No `initialdir` was passed anywhere before,
+  so they landed wherever the process happened to be started. Import now
+  starts at `staging-temp/intake/`, everything else at the library root, and
+  the last-used directory is remembered per purpose.
+- New `gui/theme.py`. No ttk theme was ever selected, so Linux got Tk's dated
+  `default`; it now picks `clam` on Linux and `vista` on Windows. Where KDE's
+  scheme can be read from `kdeglobals`, the window, view, selection,
+  alternate-row and negative colours are fed to ttk, giving correct light/dark
+  and the user's accent with no dependency. Parsing tolerates the repeated
+  keys and `[Colors:Header][Inactive]`-style sections that defeat a strict INI
+  parser, and every step degrades to the plain theme.
+- The `ttk.Combobox` popup is a bare `tk.Listbox` outside the ttk theme, so it
+  is styled through the option database instead, and given room for 18 rows
+  rather than three.
+- Treeview rows have a comfortable height derived from the font, and alternate
+  using the desktop's own alternate-row colour. A row with a dangling
+  reference is coloured with the scheme's negative colour, keeping the
+  underline as the theme-independent fallback.
+- The category picker's `＋ New category...` entry is gone, replaced by a
+  `New…` button. Creating a library is a deliberate act and should not be
+  reachable by mis-clicking in a list of existing ones.
+- Windows HiDPI: `SetProcessDpiAwareness` is called before the Tk root exists,
+  without which Tk renders blurry.
+
+### GUI plan Phase 1 — Layout persistence
+- New `gui/settings.py` replaces the two ad-hoc config helpers in `app.py`.
+  Window size and position, the browser sash, per-kind column widths, the
+  selected kind and category, and the sort column and direction all persist,
+  keyed per screen configuration (`3840x1080@96`) so attaching a monitor gets
+  its own profile. The search box is deliberately not persisted.
+- Saves are debounced 800 ms after the last `<Configure>` or sash drag, plus an
+  unconditional save on close.
+- Preferences fail soft — a damaged or future-schema file falls back to
+  defaults rather than blocking startup. The opposite of `provenance.json` on
+  purpose, and the module explains why.
+- A withdrawn Tk root reports `1x1+0+0`; geometry is only stored from a
+  mapped, normal-state window at or above its minimum size.
+- The pre-schema config (a bare `{"last_category": ...}`) is migrated rather
+  than discarded on a version check.
+- Two of my own read paths wrote, the same mistake Phase 0 fixed in the core:
+  reading a geometry profile created it, and `refresh_items()` remembered the
+  view during construction and so overwrote what `restore_view()` was about to
+  read. Reading no longer mutates.
+- `SortableTree` takes remembered widths and stretches only its last column;
+  with stretch everywhere Tk overrides restored widths on every resize.
+- **Library → Reset window layout** clears every profile, keeping remembered
+  categories and folders. Ctrl+Q quits.
+
+### GUI plan Phase 0 — Plan purity
+- `refactor.plan_*` and `ingest.plan_ingest` mutated the `Provenance` object
+  while building the plan, breaking the rule that planning touches nothing.
+  The GUI rebuilds the plan on every keystroke for its live preview, so a
+  rename typed character by character walked the provenance key through every
+  partial name and stranded it on the first — losing the original vendor
+  filename and import date. Plans now carry `ops.ProvenanceEdit` records, and
+  `provenance.apply_edits()` runs them once, after the operations succeed. The
+  `prov=` parameter is gone from those functions so the mistake is
+  unrepresentable.
+- `tests/test_plan_purity.py` asserts the provenance object is byte-identical
+  after planning every operation. The old test compared file bytes on disk and
+  never passed a provenance object, which is why it saw nothing.
+- New `lib_manager.py prune-provenance`. Rather than discarding stale entries,
+  it re-homes those whose kind and name still match exactly one item on disk —
+  only the category was wrong — and prints the details of anything it cannot
+  place before dropping it. Ambiguous matches are refused. Applied to this
+  library: 9 entries recovered, 6 dropped, 15 audit warnings down to 0.
+- `check`'s `provenance-stale` remedy claimed the entry "will be dropped on
+  the next write", which was false — nothing ever pruned them.
+
 ### Fixes found by the first CI runs
 - `test_case_colliding_symbols_in_one_category_are_an_error` could only pass on
   a case-sensitive filesystem: it wrote two files differing only by case, which

@@ -15,8 +15,9 @@ from tkinter import ttk
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..core import ops
+from . import theme
 
-NEW_CATEGORY_SENTINEL = "＋ New category..."
+NEW_CATEGORY_BUTTON = "New…"
 
 
 def apply_scaling(root: tk.Misc) -> None:
@@ -94,21 +95,26 @@ class CategoryPicker(ttk.Frame):
 
         self._combo = ttk.Combobox(
             self, textvariable=self._value, state="readonly",
-            values=self._choices(), width=34,
+            values=self._choices(), width=34, height=18,
         )
         self._combo.pack(side=tk.LEFT)
         self._combo.bind("<<ComboboxSelected>>", self._on_selected)
+
+        # A real button, rather than a magic entry in the dropdown list.
+        # Creating a library is a deliberate act and should not be something
+        # you can do by mis-clicking in a list of existing ones.
+        self._new_button = ttk.Button(
+            self, text=NEW_CATEGORY_BUTTON, width=7, command=self._prompt_new
+        )
+        self._new_button.pack(side=tk.LEFT, padx=(4, 0))
 
         self._hint = ttk.Label(self, text="", wraplength=360, justify=tk.LEFT)
         self._hint.pack(side=tk.LEFT, padx=(8, 0))
 
     def _choices(self) -> List[str]:
-        return [*self._categories, NEW_CATEGORY_SENTINEL]
+        return list(self._categories)
 
     def _on_selected(self, _event=None) -> None:
-        if self._value.get() == NEW_CATEGORY_SENTINEL:
-            self._value.set("")
-            self._prompt_new()
         self._refresh_hint()
         if self._on_change:
             self._on_change(self.get())
@@ -175,8 +181,7 @@ class CategoryPicker(ttk.Frame):
         modal(dialog, self)
 
     def get(self) -> str:
-        value = self._value.get()
-        return "" if value == NEW_CATEGORY_SENTINEL else value.strip()
+        return self._value.get().strip()
 
     def set(self, name: str) -> None:
         self._value.set(name)
@@ -315,6 +320,32 @@ class SortableTree(ttk.Treeview):
         for index, (_value, iid) in enumerate(items):
             self.move(iid, "", index)
 
+    def configure_appearance(self) -> None:
+        """
+        Set up alternating row colours and the problem highlight.
+
+        Striping uses the desktop's own alternate-row colour when it could be
+        read, so it matches other list views rather than being an invented
+        shade. Without a palette the rows stay plain and problems are marked
+        by an underline alone, which reads correctly in any theme.
+        """
+        stripes = theme.striping_colours()
+        if stripes:
+            self.tag_configure("evenrow", background=stripes["even"])
+            self.tag_configure("oddrow", background=stripes["odd"])
+        problem_fg = theme.problem_foreground()
+        if problem_fg:
+            self.tag_configure("problem", font=self._underlined_font(),
+                               foreground=problem_fg)
+        else:
+            self.tag_configure("problem", font=self._underlined_font())
+
+    @staticmethod
+    def _underlined_font() -> tkfont.Font:
+        f = tkfont.nametofont("TkDefaultFont").copy()
+        f.configure(underline=True)
+        return f
+
     def repopulate(self, rows: Sequence) -> None:
         """Replace the contents, keeping selection and scroll where possible."""
         selected = set(self.selection())
@@ -324,9 +355,11 @@ class SortableTree(ttk.Treeview):
             first_visible = 0.0
 
         self.delete(*self.get_children(""))
-        for row in rows:
-            tags = ("problem",) if getattr(row, "problem", "") else ()
-            self.insert("", tk.END, iid=row.iid, values=row.values, tags=tags)
+        for index, row in enumerate(rows):
+            tags = ["evenrow" if index % 2 == 0 else "oddrow"]
+            if getattr(row, "problem", ""):
+                tags.append("problem")
+            self.insert("", tk.END, iid=row.iid, values=row.values, tags=tuple(tags))
 
         still_there = [iid for iid in selected if self.exists(iid)]
         if still_there:

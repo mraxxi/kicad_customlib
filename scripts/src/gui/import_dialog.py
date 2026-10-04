@@ -40,7 +40,8 @@ except Exception:  # noqa: BLE001 -- absence is normal, never fatal
 class ImportDialog(tk.Toplevel):
     def __init__(self, parent: tk.Misc, controller: Controller,
                  *, initial_category: str = "",
-                 on_done: Optional[Callable[[str], None]] = None):
+                 on_done: Optional[Callable[[str], None]] = None,
+                 settings: Optional["st.Settings"] = None):
         super().__init__(parent)
         self.title("Import components")
         self.geometry("1040x620")
@@ -48,6 +49,9 @@ class ImportDialog(tk.Toplevel):
 
         self.controller = controller
         self.on_done = on_done
+        # Supplies and records the directory the dialogs open in. Optional so
+        # the dialog still works standalone, e.g. in tests.
+        self.settings = settings
         self.sources: List[Path] = []
         self.candidates: List[ingest_mod.Candidate] = []
         self._previews: List[ingest_mod.IngestPreview] = []
@@ -158,29 +162,38 @@ class ImportDialog(tk.Toplevel):
             side=tk.RIGHT, padx=(0, 6))
 
     # -- sources ----------------------------------------------------------
+    def _start_dir(self) -> Path:
+        default = self.controller.default_dir(st.DIR_IMPORT_SOURCE)
+        if self.settings is None:
+            return default
+        return self.settings.dir_for(st.DIR_IMPORT_SOURCE, default)
+
+    def _remember_dir(self, path: Path) -> None:
+        if self.settings is not None:
+            self.settings.remember_dir(st.DIR_IMPORT_SOURCE, path)
+            self.settings.save()
+
     def _add_zips(self) -> None:
-        paths = filedialog.askopenfilenames(
-            parent=self, title="Select part archives",
-            filetypes=[("ZIP archives", "*.zip"), ("All files", "*.*")],
+        paths = filepicker.open_files(
+            self, title="Select part archives", initialdir=self._start_dir(),
+            filters=filepicker.ARCHIVE_FILTERS,
         )
-        self._add_sources([Path(p) for p in paths])
+        self._add_sources(paths)
 
     def _add_folder(self) -> None:
         """A real directory chooser -- the old dialog could not select one."""
-        path = filedialog.askdirectory(parent=self, title="Select a part folder")
+        path = filepicker.open_directory(
+            self, title="Select a part folder", initialdir=self._start_dir()
+        )
         if path:
-            self._add_sources([Path(path)])
+            self._add_sources([path])
 
     def _add_files(self) -> None:
-        paths = filedialog.askopenfilenames(
-            parent=self, title="Select KiCad files",
-            filetypes=[
-                ("KiCad files", "*.kicad_sym *.kicad_mod"),
-                ("3D models", "*.step *.stp *.wrl"),
-                ("All files", "*.*"),
-            ],
+        paths = filepicker.open_files(
+            self, title="Select KiCad files", initialdir=self._start_dir(),
+            filters=filepicker.KICAD_FILTERS,
         )
-        self._add_sources([Path(p) for p in paths])
+        self._add_sources(paths)
 
     def _on_drop(self, event) -> None:
         try:
@@ -194,6 +207,7 @@ class ImportDialog(tk.Toplevel):
         if not added:
             return
         self.sources.extend(added)
+        self._remember_dir(added[-1])
         self._refresh_sources_label()
         self._detect()
 

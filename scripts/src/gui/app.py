@@ -22,7 +22,9 @@ from typing import Optional
 
 from ..core import check as check_mod
 from ..core import ops
+from . import filepicker
 from . import settings as st
+from . import theme
 from .browser import LibraryBrowser
 from .controller import Controller, Row, parse_iid
 from .import_dialog import ImportDialog
@@ -54,6 +56,7 @@ class LibraryManagerApp:
         root.title(f"KiCad Custom Library Manager - {self.controller.root.name}")
         root.minsize(MAIN_MIN_WIDTH, MAIN_MIN_HEIGHT)
         apply_scaling(root)
+        self.theme_name, self.palette = theme.apply_theme(root)
         self._restore_window()
 
         self._build()
@@ -338,6 +341,7 @@ class LibraryManagerApp:
             self.root, self.controller,
             initial_category=remembered,
             on_done=self._after_import,
+            settings=self.settings,
         )
         self.root.wait_window(dialog)
         chosen = dialog.category_picker.get()
@@ -473,10 +477,17 @@ class LibraryManagerApp:
         AuditDialog(self.root, self.controller, self.browser)
 
     def on_package(self) -> None:
-        project = filedialog.askdirectory(
-            parent=self.root, title="Select the KiCad project to package")
-        if not project:
+        start = self.settings.dir_for(
+            st.DIR_PACKAGE_PROJECT, self.controller.default_dir(st.DIR_PACKAGE_PROJECT)
+        )
+        chosen = filepicker.open_directory(
+            self.root, title="Select the KiCad project to package", initialdir=start
+        )
+        if not chosen:
             return
+        project = str(chosen)
+        self.settings.remember_dir(st.DIR_PACKAGE_PROJECT, chosen)
+        self.settings.save()
         try:
             plan, result = self.controller.plan_package(Path(project))
         except Exception as exc:  # noqa: BLE001
@@ -610,6 +621,9 @@ class AuditDialog(tk.Toplevel):
 
 
 def launch_gui(lib_root: Path) -> None:
+    # Must happen before any Tk root exists, or Tk renders blurry on a HiDPI
+    # Windows display.
+    theme.enable_windows_hidpi()
     try:
         from tkinterdnd2 import TkinterDnD  # type: ignore
         root = TkinterDnD.Tk()

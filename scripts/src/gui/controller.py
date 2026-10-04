@@ -24,6 +24,7 @@ from ..core import packager as packager_mod
 from ..core import provenance as pv
 from ..core import refactor as rf
 from ..core import table_gen as tg
+from .settings import DIR_IMPORT_SOURCE
 
 KIND_SYMBOL = "symbol"
 KIND_FOOTPRINT = "footprint"
@@ -269,6 +270,20 @@ class Controller:
         if row.problem:
             lines.append(f"PROBLEM: {row.problem}")
         return "\n".join(lines)
+
+    # -- first-run dialog directories --------------------------------------
+    def default_dir(self, purpose: str) -> Path:
+        """
+        Where a file dialog should start before the user has chosen anything.
+
+        Import defaults to staging-temp/intake/ because that is the documented
+        drop spot for downloads; everything else starts at the library root.
+        Once a directory has been used, the remembered one wins.
+        """
+        if purpose == DIR_IMPORT_SOURCE:
+            intake = self.root / "staging-temp" / "intake"
+            return intake if intake.is_dir() else self.root
+        return self.root
 
     # -- category validation ----------------------------------------------
     def validate_new_category(self, name: str) -> Tuple[bool, str]:

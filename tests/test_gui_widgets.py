@@ -90,20 +90,28 @@ def test_status_bar_shows_messages(tk_root):
     assert bar._detail.get() == "3 items"
 
 
-def test_category_picker_lists_categories_and_a_create_entry(tk_root, control):
-    from src.gui.widgets import NEW_CATEGORY_SENTINEL, CategoryPicker
+def test_category_picker_lists_only_real_categories(tk_root, control):
+    """
+    Creating a library is a deliberate act, so it lives on a button rather
+    than as a magic entry you can reach by mis-clicking in the list.
+    """
+    from src.gui.widgets import CategoryPicker
     picker = CategoryPicker(tk_root, control.categories(),
                             validate=control.validate_new_category)
-    values = list(picker._combo.cget("values"))
-    assert values[:-1] == ["Amp_Test", "Conn_Test"]
-    assert values[-1] == NEW_CATEGORY_SENTINEL
+    assert list(picker._combo.cget("values")) == ["Amp_Test", "Conn_Test"]
 
 
-def test_category_picker_never_returns_the_sentinel_as_a_name(tk_root, control):
-    from src.gui.widgets import NEW_CATEGORY_SENTINEL, CategoryPicker
+def test_category_picker_offers_a_new_button(tk_root, control):
+    from src.gui.widgets import NEW_CATEGORY_BUTTON, CategoryPicker
     picker = CategoryPicker(tk_root, control.categories(),
                             validate=control.validate_new_category)
-    picker._value.set(NEW_CATEGORY_SENTINEL)
+    assert picker._new_button.cget("text") == NEW_CATEGORY_BUTTON
+
+
+def test_category_picker_returns_empty_before_a_choice(tk_root, control):
+    from src.gui.widgets import CategoryPicker
+    picker = CategoryPicker(tk_root, control.categories(),
+                            validate=control.validate_new_category)
     assert picker.get() == ""
 
 
