@@ -250,6 +250,86 @@ def test_browser_handles_a_numeric_category_name(tk_root, lib_root):
     assert browser.selected_rows()[0].category == "3255"
 
 
+def test_browser_column_widths_survive_a_kind_switch(tk_root, control, tmp_path):
+    """
+    The widths must come back when the user returns to a view, which is why
+    only the last column stretches -- see SortableTree.set_columns.
+    """
+    from src.gui import settings as st
+    from src.gui.browser import LibraryBrowser
+    layout = st.LayoutStore(st.Settings(path=tmp_path / "gui.json"), "k")
+    browser = LibraryBrowser(tk_root, control, layout=layout)
+
+    browser.tree.column("Name", width=333)
+    browser._remember_columns()
+    browser.kind.set(ct.KIND_FOOTPRINT)
+    browser.refresh_items()
+    browser.kind.set(ct.KIND_SYMBOL)
+    browser.refresh_items()
+    assert browser.tree.column("Name", "width") == 333
+
+
+def test_browser_column_widths_are_stored_per_kind(tk_root, control, tmp_path):
+    from src.gui import settings as st
+    from src.gui.browser import LibraryBrowser
+    layout = st.LayoutStore(st.Settings(path=tmp_path / "gui.json"), "k")
+    browser = LibraryBrowser(tk_root, control, layout=layout)
+
+    browser.tree.column("Name", width=333)
+    browser._remember_columns()
+    browser.kind.set(ct.KIND_MODEL)
+    browser.refresh_items()
+    browser.tree.column("Name", width=111)
+    browser._remember_columns()
+
+    assert layout.columns(ct.KIND_SYMBOL)["Name"] == 333
+    assert layout.columns(ct.KIND_MODEL)["Name"] == 111
+
+
+def test_only_the_last_column_stretches(tk_root, control):
+    """With stretch everywhere, Tk overrides restored widths on every resize."""
+    from src.gui.browser import LibraryBrowser
+    browser = LibraryBrowser(tk_root, control)
+    columns = list(browser.tree.cget("columns"))
+    stretches = [bool(browser.tree.column(c, "stretch")) for c in columns]
+    assert stretches == [False] * (len(columns) - 1) + [True]
+
+
+def test_browser_restores_the_remembered_view(tk_root, control, tmp_path):
+    from src.gui import settings as st
+    from src.gui.browser import LibraryBrowser
+    settings = st.Settings(path=tmp_path / "gui.json")
+    layout = st.LayoutStore(settings, "k")
+    layout.remember_view(ct.KIND_FOOTPRINT, "Conn_Test")
+
+    browser = LibraryBrowser(tk_root, control, layout=layout)
+    browser.restore_view()
+    assert browser.kind.get() == ct.KIND_FOOTPRINT
+    assert browser.selected_category() == "Conn_Test"
+
+
+def test_browser_restoring_a_vanished_category_falls_back_to_all(
+    tk_root, control, tmp_path
+):
+    from src.gui import settings as st
+    from src.gui.browser import LibraryBrowser
+    layout = st.LayoutStore(st.Settings(path=tmp_path / "gui.json"), "k")
+    layout.remember_view(ct.KIND_SYMBOL, "Deleted_Category")
+    browser = LibraryBrowser(tk_root, control, layout=layout)
+    browser.restore_view()
+    assert browser.selected_category() is None
+
+
+def test_browser_works_without_a_layout_store(tk_root, control):
+    """Layout persistence is optional, so the widget stays usable standalone."""
+    from src.gui.browser import LibraryBrowser
+    browser = LibraryBrowser(tk_root, control, layout=None)
+    browser.refresh_items()
+    browser.remember_sort()
+    browser._remember_columns()
+    assert browser._rows
+
+
 def test_browser_select_item_jumps_to_a_row(tk_root, control):
     from src.gui.browser import LibraryBrowser
     browser = LibraryBrowser(tk_root, control)
@@ -278,6 +358,106 @@ def test_app_constructs_against_an_empty_library(tk_root, lib_root):
     from src.gui.app import LibraryManagerApp
     app = LibraryManagerApp(tk_root, lib_root)
     assert app.browser.category_list.size() == 1      # just [All categories]
+
+
+def test_app_restores_a_saved_window_size_clamped_to_the_screen(
+    tk_root, control, monkeypatch, tmp_path
+):
+    """A size saved on a bigger desktop must be capped, not applied blindly."""
+    from src.gui import settings as st
+    from src.gui.app import LibraryManagerApp
+
+    monkeypatch.setattr(st.Settings, "load",
+                        classmethod(lambda cls, path=None: cls(path=tmp_path / "gui.json")))
+    seeded = st.Settings(path=tmp_path / "gui.json")
+    key = st.Settings.profile_key(tk_root)
+    seeded.set_window_geometry(key, st.WINDOW_MAIN, "99999x99999+0+0")
+    monkeypatch.setattr(st.Settings, "load", classmethod(lambda cls, path=None: seeded))
+
+    applied = []
+    real_geometry = tk_root.geometry
+    monkeypatch.setattr(tk_root, "geometry",
+                        lambda *a: (applied.append(a[0]) or None) if a else real_geometry())
+    LibraryManagerApp(tk_root, control.root)
+    assert applied, "no geometry was applied"
+    parsed = st.parse_geometry(applied[0])
+    assert parsed["width"] <= tk_root.winfo_screenwidth()
+    assert parsed["height"] <= tk_root.winfo_screenheight()
+
+
+def test_app_falls_back_to_the_default_size_for_junk_geometry(
+    tk_root, control, monkeypatch, tmp_path
+):
+    from src.gui import settings as st
+    from src.gui.app import LibraryManagerApp
+
+    seeded = st.Settings(path=tmp_path / "gui.json")
+    seeded.set_window_geometry(st.Settings.profile_key(tk_root), st.WINDOW_MAIN, "nonsense")
+    monkeypatch.setattr(st.Settings, "load", classmethod(lambda cls, path=None: seeded))
+
+    applied = []
+    real_geometry = tk_root.geometry
+    monkeypatch.setattr(tk_root, "geometry",
+                        lambda *a: (applied.append(a[0]) or None) if a else real_geometry())
+    LibraryManagerApp(tk_root, control.root)
+    assert applied[0] == "1180x720"
+
+
+def test_app_does_not_store_the_geometry_of_an_unmapped_window(tk_root, control):
+    """
+    A withdrawn root reports "1x1+0+0"; storing that would reopen the app as a
+    one-pixel window.
+    """
+    from src.gui.app import LibraryManagerApp
+    app = LibraryManagerApp(tk_root, control.root)       # tk_root is withdrawn
+    assert app._geometry_is_storable() is False
+    app._capture_layout()
+    assert app.layout.window("main") is None
+
+
+def test_app_debounces_the_layout_save(tk_root, control, monkeypatch, tmp_path):
+    from src.gui import settings as st
+    from src.gui.app import LibraryManagerApp
+    seeded = st.Settings(path=tmp_path / "gui.json")
+    monkeypatch.setattr(st.Settings, "load", classmethod(lambda cls, path=None: seeded))
+    app = LibraryManagerApp(tk_root, control.root)
+
+    saves = []
+    monkeypatch.setattr(app.settings, "save", lambda: saves.append(1) or True)
+    for _ in range(20):
+        app._schedule_save()
+    assert saves == [], "writing on every event would thrash the file"
+    app._flush_save()
+    assert len(saves) == 1
+
+
+def test_reset_layout_clears_profiles_but_keeps_the_category(
+    tk_root, control, monkeypatch, tmp_path
+):
+    from src.gui import settings as st
+    from src.gui.app import LibraryManagerApp
+    seeded = st.Settings(path=tmp_path / "gui.json")
+    monkeypatch.setattr(st.Settings, "load", classmethod(lambda cls, path=None: seeded))
+    app = LibraryManagerApp(tk_root, control.root)
+    app.settings.set("last_category", "Keep_Me")
+    app.layout.remember_sash(321)
+    monkeypatch.setattr("src.gui.app.messagebox.askyesno", lambda *a, **k: True)
+
+    app.on_reset_layout()
+    assert app.settings.data["geometry"] == {}
+    assert app.settings.get("last_category") == "Keep_Me"
+
+
+def test_reset_layout_can_be_declined(tk_root, control, monkeypatch, tmp_path):
+    from src.gui import settings as st
+    from src.gui.app import LibraryManagerApp
+    seeded = st.Settings(path=tmp_path / "gui.json")
+    monkeypatch.setattr(st.Settings, "load", classmethod(lambda cls, path=None: seeded))
+    app = LibraryManagerApp(tk_root, control.root)
+    app.layout.remember_sash(321)
+    monkeypatch.setattr("src.gui.app.messagebox.askyesno", lambda *a, **k: False)
+    app.on_reset_layout()
+    assert app.layout.sash() == 321
 
 
 def test_app_shows_the_stale_banner_without_a_pack_error(tk_root, lib_root):

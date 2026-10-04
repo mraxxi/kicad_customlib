@@ -22,45 +22,46 @@ from typing import Optional
 
 from ..core import check as check_mod
 from ..core import ops
+from . import settings as st
 from .browser import LibraryBrowser
 from .controller import Controller, Row, parse_iid
 from .import_dialog import ImportDialog
 from .rename_dialog import CategoryRenameDialog, MoveDialog, RenameDialog
 from .widgets import PlanPreview, StatusBar, apply_scaling, modal
 
-CONFIG_DIR = Path.home() / ".config" / "kicad_customlib"
-CONFIG_FILE = CONFIG_DIR / "gui.json"
+MAIN_MIN_WIDTH = 900
+MAIN_MIN_HEIGHT = 560
+MAIN_DEFAULT_GEOMETRY = "1180x720"
 
-
-def _load_config() -> dict:
-    """GUI preferences live outside the repo so they are never committed."""
-    try:
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_config(data: dict) -> None:
-    try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        pass  # a preference failing to save is not worth interrupting the user
+# Layout changes are saved on a debounce: a <Configure> or sash drag fires
+# continuously while the mouse moves, and writing the file on every event
+# would thrash it.
+SAVE_DEBOUNCE_MS = 800
 
 
 class LibraryManagerApp:
     def __init__(self, root: tk.Tk, lib_root: Path):
         self.root = root
         self.controller = Controller(lib_root)
-        self.config = _load_config()
+
+        self.settings = st.Settings.load()
+        self.profile_key = st.Settings.profile_key(root)
+        self.layout = st.LayoutStore(
+            self.settings, self.profile_key, on_dirty=self._schedule_save
+        )
+        self._save_job: Optional[str] = None
 
         root.title(f"KiCad Custom Library Manager - {self.controller.root.name}")
-        root.geometry("1180x720")
-        root.minsize(900, 560)
+        root.minsize(MAIN_MIN_WIDTH, MAIN_MIN_HEIGHT)
         apply_scaling(root)
+        self._restore_window()
 
         self._build()
+        root.bind("<Configure>", self._on_configure, add="+")
+        root.protocol("WM_DELETE_WINDOW", self.on_close)
+
         self.refresh()
+        self.browser.restore_view()
 
     # -- construction -----------------------------------------------------
     def _build(self) -> None:
@@ -109,6 +110,7 @@ class LibraryManagerApp:
             on_activate=lambda row: self.on_rename(),
             on_item_menu=self._show_item_menu,
             on_category_menu=self._show_category_menu,
+            layout=self.layout,
         )
         self.browser.pack(fill=tk.BOTH, expand=True)
         details.pack(fill=tk.X, pady=(8, 8))
@@ -118,6 +120,114 @@ class LibraryManagerApp:
 
         self._build_menus()
         self._bind_keys()
+
+    # -- window geometry ---------------------------------------------------
+    def _restore_window(self) -> None:
+        """
+        Reapply the size (and, where the window manager allows it, position)
+        saved for this screen configuration.
+
+        Position is best-effort by design: Tk runs under XWayland on a Wayland
+        session, which may ignore it, and native Wayland always does. Size is
+        the part that can be relied on.
+        """
+        saved = self.layout.window(st.WINDOW_MAIN)
+        parsed = st.parse_geometry(saved) if saved else None
+        if parsed is None:
+            self.root.geometry(MAIN_DEFAULT_GEOMETRY)
+            return
+        geometry = st.clamp_geometry(
+            parsed,
+            self.root.winfo_screenwidth(),
+            self.root.winfo_screenheight(),
+            min_width=MAIN_MIN_WIDTH,
+            min_height=MAIN_MIN_HEIGHT,
+        )
+        try:
+            self.root.geometry(geometry)
+        except tk.TclError:
+            self.root.geometry(MAIN_DEFAULT_GEOMETRY)
+
+    def _on_configure(self, event) -> None:
+        # <Configure> bubbles from every child; only the root's own size and
+        # position are worth storing.
+        if event.widget is self.root:
+            self._schedule_save()
+
+    def _schedule_save(self) -> None:
+        if self._save_job is not None:
+            try:
+                self.root.after_cancel(self._save_job)
+            except (tk.TclError, ValueError):
+                pass
+        self._save_job = self.root.after(SAVE_DEBOUNCE_MS, self._flush_save)
+
+    def _flush_save(self) -> None:
+        self._save_job = None
+        self._capture_layout()
+        self.settings.save()
+
+    def _geometry_is_storable(self) -> bool:
+        """
+        Whether the root's current geometry is worth remembering.
+
+        An unmapped, withdrawn or iconified window reports nonsense -- a
+        withdrawn root returns "1x1+0+0" -- and storing that would reopen the
+        app as a one-pixel window.
+        """
+        try:
+            if not self.root.winfo_ismapped():
+                return False
+            if self.root.state() not in ("normal", "zoomed"):
+                return False
+            parsed = st.parse_geometry(self.root.geometry())
+        except tk.TclError:
+            return False
+        return (
+            parsed is not None
+            and parsed["width"] >= MAIN_MIN_WIDTH
+            and parsed["height"] >= MAIN_MIN_HEIGHT
+        )
+
+    def _capture_layout(self) -> None:
+        if self._geometry_is_storable():
+            self.layout.remember_window(st.WINDOW_MAIN, self.root.geometry())
+        if hasattr(self, "browser"):
+            self.browser.remember_sort()
+
+    def on_close(self) -> None:
+        """Persist the layout before the window goes away."""
+        if self._save_job is not None:
+            try:
+                self.root.after_cancel(self._save_job)
+            except (tk.TclError, ValueError):
+                pass
+            self._save_job = None
+        self._capture_layout()
+        self.settings.save()
+        self.root.destroy()
+
+    def on_reset_layout(self) -> None:
+        """
+        Forget every saved window size, split and column width.
+
+        The escape hatch: without it, one unusable saved geometry -- a window
+        sized for a monitor that is no longer attached, say -- traps the user
+        with no way back from inside the app.
+        """
+        if not messagebox.askyesno(
+            "Reset window layout",
+            "Forget saved window sizes, panel splits and column widths for "
+            "every screen configuration?\n\n"
+            "Remembered categories and folders are kept.",
+            parent=self.root,
+        ):
+            return
+        self.settings.reset_layout()
+        self.settings.save()
+        self.root.geometry(MAIN_DEFAULT_GEOMETRY)
+        self.browser.refresh_items()
+        self.status.set("Window layout reset. Sizes reapply fully on restart.")
 
     @staticmethod
     def _bold() -> tkfont.Font:
@@ -154,7 +264,9 @@ class LibraryManagerApp:
         library.add_separator()
         library.add_command(label="Package project...", command=self.on_package)
         library.add_separator()
-        library.add_command(label="Quit", command=self.root.destroy)
+        library.add_command(label="Reset window layout", command=self.on_reset_layout)
+        library.add_separator()
+        library.add_command(label="Quit", accelerator="Ctrl+Q", command=self.on_close)
         menubar.add_cascade(label="Library", menu=library)
 
         item = tk.Menu(menubar, tearoff=0)
@@ -170,6 +282,7 @@ class LibraryManagerApp:
         self.root.bind("<Delete>", lambda _e: self.on_delete())
         self.root.bind("<Control-f>", lambda _e: self.browser.focus_search())
         self.root.bind("<F5>", lambda _e: self.refresh())
+        self.root.bind("<Control-q>", lambda _e: self.on_close())
 
     # -- state ------------------------------------------------------------
     def refresh(self) -> None:
@@ -220,7 +333,7 @@ class LibraryManagerApp:
                         else "Could not regenerate the tables.")
 
     def on_import(self, category: str = "") -> None:
-        remembered = category or self.config.get("last_category", "")
+        remembered = category or self.settings.get("last_category", "")
         dialog = ImportDialog(
             self.root, self.controller,
             initial_category=remembered,
@@ -229,8 +342,8 @@ class LibraryManagerApp:
         self.root.wait_window(dialog)
         chosen = dialog.category_picker.get()
         if chosen:
-            self.config["last_category"] = chosen
-            _save_config(self.config)
+            self.settings.set("last_category", chosen)
+            self.settings.save()
         self.refresh()
 
     def on_import_here(self) -> None:

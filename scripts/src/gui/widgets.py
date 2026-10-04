@@ -12,7 +12,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..core import ops
 
@@ -258,14 +258,52 @@ class SortableTree(ttk.Treeview):
         self._sort_reverse = False
         self.set_columns(columns)
 
-    def set_columns(self, columns: Sequence[str]) -> None:
+    def set_columns(
+        self,
+        columns: Sequence[str],
+        widths: Optional[Dict[str, int]] = None,
+        defaults: Optional[Dict[str, int]] = None,
+    ) -> None:
+        """
+        Install the columns, optionally at remembered widths.
+
+        Only the last column stretches. With `stretch=True` everywhere, Tk
+        re-apportions the columns whenever the window resizes and immediately
+        overrides any width the user set or we restored -- so the trade is
+        deliberate: columns no longer grow with the window, and the widths the
+        user chose stick.
+        """
+        widths = widths or {}
+        defaults = defaults or {}
         self.config(columns=list(columns))
+        last = columns[-1] if columns else None
         for name in columns:
             self.heading(name, text=name,
                          command=lambda c=name: self._sort_by(c))
-            self.column(name, width=150, stretch=True)
-        if columns:
-            self.column(columns[0], width=240)
+            width = widths.get(name) or defaults.get(name) or 150
+            self.column(name, width=width, stretch=(name == last))
+
+    def column_widths(self) -> Dict[str, int]:
+        """The current width of each column, for persisting."""
+        out: Dict[str, int] = {}
+        for name in self.cget("columns"):
+            try:
+                out[str(name)] = int(self.column(str(name), "width"))
+            except (tk.TclError, TypeError, ValueError):
+                continue
+        return out
+
+    @property
+    def sort_state(self) -> Tuple[Optional[str], bool]:
+        return self._sort_column, self._sort_reverse
+
+    def apply_sort(self, column: Optional[str], reverse: bool) -> None:
+        """Restore a remembered sort without toggling it."""
+        if not column or column not in self.cget("columns"):
+            return
+        self._sort_column = column
+        self._sort_reverse = not reverse   # _sort_by flips it
+        self._sort_by(column)
 
     def _sort_by(self, column: str) -> None:
         if self._sort_column == column:

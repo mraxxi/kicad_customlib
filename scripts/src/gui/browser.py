@@ -18,6 +18,17 @@ from .widgets import SortableTree
 
 ALL_CATEGORIES = "[All categories]"
 
+# First-run column widths, chosen for the content each column holds. Saved
+# widths override these.
+DEFAULT_WIDTHS = {
+    KIND_SYMBOL: {"Name": 240, "Category": 190, "Footprint": 280,
+                  "3D": 48, "Source": 200},
+    KIND_FOOTPRINT: {"Name": 280, "Category": 190, "3D models": 90,
+                     "Used by": 80, "Source": 200},
+    KIND_MODEL: {"Name": 280, "Category": 190, "Used by": 80,
+                 "Size": 80, "Source": 200},
+}
+
 
 class LibraryBrowser(ttk.Frame):
     def __init__(
@@ -29,9 +40,13 @@ class LibraryBrowser(ttk.Frame):
         on_activate: Optional[Callable[[Row], None]] = None,
         on_category_menu: Optional[Callable[[str, int, int], None]] = None,
         on_item_menu: Optional[Callable[[int, int], None]] = None,
+        layout: Optional["LayoutStore"] = None,
     ):
         super().__init__(parent)
         self.controller = controller
+        # Supplies and receives remembered sash/column/view state. Optional so
+        # the browser still works standalone, e.g. in tests.
+        self.layout = layout
         self.on_select = on_select
         self.on_activate = on_activate
         self.on_category_menu = on_category_menu
@@ -45,8 +60,12 @@ class LibraryBrowser(ttk.Frame):
         self.refresh()
 
     def _build(self) -> None:
-        paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        self.paned = paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
+        # sashpos() is clamped to zero before the pane has been mapped and
+        # sized, so the restore has to wait for <Map>.
+        paned.bind("<Map>", self._restore_sash, add="+")
+        paned.bind("<ButtonRelease-1>", self._remember_sash, add="+")
 
         # Categories
         left = ttk.Frame(paned, padding=4)
@@ -54,7 +73,7 @@ class LibraryBrowser(ttk.Frame):
         ttk.Label(left, text="Categories").pack(anchor=tk.W, pady=(0, 4))
         self.category_list = tk.Listbox(left, exportselection=False, activestyle="none")
         self.category_list.pack(fill=tk.BOTH, expand=True)
-        self.category_list.bind("<<ListboxSelect>>", lambda _e: self.refresh_items())
+        self.category_list.bind("<<ListboxSelect>>", self._on_category_chosen)
         self.category_list.bind("<Button-3>", self._category_context)
 
         # Items
@@ -67,7 +86,7 @@ class LibraryBrowser(ttk.Frame):
                              ("Footprints", KIND_FOOTPRINT),
                              ("3D models", KIND_MODEL)):
             ttk.Radiobutton(controls, text=label, value=value, variable=self.kind,
-                            command=self.refresh_items).pack(side=tk.LEFT)
+                            command=self._on_kind_chosen).pack(side=tk.LEFT)
         ttk.Label(controls, text="Search:").pack(side=tk.LEFT, padx=(14, 4))
         self.search_entry = ttk.Entry(controls, textvariable=self.search, width=28)
         self.search_entry.pack(side=tk.LEFT)
@@ -86,6 +105,7 @@ class LibraryBrowser(ttk.Frame):
         # A row with a problem is marked by an underline rather than a colour,
         # so it reads the same in a light or a dark theme.
         self.tree.tag_configure("problem", font=self._underlined())
+        self.tree.bind("<ButtonRelease-1>", self._remember_columns, add="+")
         self.tree.bind("<<TreeviewSelect>>", self._selection_changed)
         self.tree.bind("<Double-1>", self._activate)
         self.tree.bind("<Button-3>", self._item_context)
@@ -98,6 +118,24 @@ class LibraryBrowser(ttk.Frame):
         return f
 
     # -- data -------------------------------------------------------------
+    def restore_view(self) -> None:
+        """
+        Re-select the kind and category the user was last looking at.
+
+        Called once after construction rather than from __init__, so a caller
+        that does not persist layout is unaffected.
+        """
+        if not self.layout:
+            return
+        kind, category = self.layout.view()
+        if kind in COLUMNS:
+            self.kind.set(kind)
+        if category and category in self.controller.categories():
+            names = self.controller.categories()
+            self.category_list.selection_clear(0, tk.END)
+            self.category_list.selection_set(names.index(category) + 1)
+        self.refresh_items()
+
     def refresh(self) -> None:
         """Reload categories and items, preserving the current selection."""
         previous = self.selected_category()
@@ -116,13 +154,67 @@ class LibraryBrowser(ttk.Frame):
 
     def refresh_items(self) -> None:
         kind = self.kind.get()
-        self.tree.set_columns(COLUMNS[kind])
+        widths = self.layout.columns(kind) if self.layout else {}
+        self.tree.set_columns(COLUMNS[kind], widths=widths,
+                              defaults=DEFAULT_WIDTHS.get(kind))
         self.tree.tag_configure("problem", font=self._underlined())
+        if self.layout:
+            column, reverse = self.layout.sort()
+            self.tree.apply_sort(column, reverse)
+        # The view is deliberately NOT remembered here. refresh_items() runs
+        # during construction, with defaults in place, so writing from it
+        # overwrote the saved view before restore_view() could read it.
+        # Remembering happens only on an explicit user action.
         self._rows = self.controller.rows(
             kind, category=self.selected_category(), search=self.search.get()
         )
         self.tree.repopulate(self._rows)
         self._selection_changed()
+
+    # -- user actions that change the view ---------------------------------
+    def _on_kind_chosen(self) -> None:
+        self.refresh_items()
+        self._remember_view()
+
+    def _on_category_chosen(self, _event=None) -> None:
+        self.refresh_items()
+        self._remember_view()
+
+    def _remember_view(self) -> None:
+        if self.layout:
+            self.layout.remember_view(self.kind.get(), self.selected_category())
+
+    # -- layout persistence ------------------------------------------------
+    def _restore_sash(self, _event=None) -> None:
+        if not self.layout:
+            return
+        position = self.layout.sash()
+        if not position:
+            return
+        self.update_idletasks()
+        try:
+            if 0 < position < self.paned.winfo_width():
+                self.paned.sashpos(0, position)
+        except tk.TclError:
+            pass
+
+    def _remember_sash(self, _event=None) -> None:
+        if not self.layout:
+            return
+        try:
+            self.layout.remember_sash(self.paned.sashpos(0))
+        except tk.TclError:
+            pass
+
+    def _remember_columns(self, _event=None) -> None:
+        if self.layout:
+            self.layout.remember_columns(self.kind.get(), self.tree.column_widths())
+
+    def remember_sort(self) -> None:
+        if self.layout:
+            column, reverse = self.tree.sort_state
+            if column:
+                self.layout.remember_sort(column, reverse)
 
     def selected_category(self) -> Optional[str]:
         selection = self.category_list.curselection()
