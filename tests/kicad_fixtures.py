@@ -358,3 +358,131 @@ def zip_unsafe_paths(path: Path) -> Path:
         "../escaped.kicad_sym": symbol_lib([symbol_block("Escaped")]),
         "ok/Good.kicad_sym": symbol_lib([symbol_block("Good")]),
     })
+
+
+# --------------------------------------------------------------------------
+# Projects (for the packager)
+# --------------------------------------------------------------------------
+
+SCH_VERSION = "20250114"
+PCB_VERSION = "20241229"
+
+
+def schematic_text(symbols: Sequence[tuple]) -> str:
+    """
+    A KiCad 10 schematic referencing `(lib_id, footprint_id)` pairs.
+
+    Shaped like the real thing: lib_instances, uuids and a Footprint property
+    per symbol, so the packager's regexes are exercised against realistic
+    surroundings rather than a bare minimum.
+    """
+    blocks = []
+    for i, (lib_id, footprint_id) in enumerate(symbols):
+        ref = f"U{i + 1}"
+        blocks.append(f'''\t(symbol
+\t\t(lib_id "{lib_id}")
+\t\t(at {25.4 * (i + 1)} 50.8 0)
+\t\t(unit 1)
+\t\t(exclude_from_sim no)
+\t\t(in_bom yes)
+\t\t(on_board yes)
+\t\t(uuid "0000{i:04d}-1111-4222-8333-444455556666")
+\t\t(property "Reference" "{ref}"
+\t\t\t(at {25.4 * (i + 1)} 45.72 0)
+\t\t\t(effects
+\t\t\t\t(font
+\t\t\t\t\t(size 1.27 1.27)
+\t\t\t\t)
+\t\t\t)
+\t\t)
+\t\t(property "Footprint" "{footprint_id}"
+\t\t\t(at {25.4 * (i + 1)} 55.88 0)
+\t\t\t(hide yes)
+\t\t\t(effects
+\t\t\t\t(font
+\t\t\t\t\t(size 1.27 1.27)
+\t\t\t\t)
+\t\t\t)
+\t\t)
+\t\t(instances
+\t\t\t(project "test"
+\t\t\t\t(path "/0000aaaa-bbbb-4ccc-8ddd-eeeeffff0000"
+\t\t\t\t\t(reference "{ref}")
+\t\t\t\t\t(unit 1)
+\t\t\t\t)
+\t\t\t)
+\t\t)
+\t)''')
+    body = "\n".join(blocks)
+    return (
+        "(kicad_sch\n"
+        f"\t(version {SCH_VERSION})\n"
+        '\t(generator "eeschema")\n'
+        '\t(generator_version "10.0")\n'
+        '\t(uuid "0000aaaa-bbbb-4ccc-8ddd-eeeeffff0000")\n'
+        "\t(paper \"A4\")\n"
+        f"{body}\n"
+        ")\n"
+    )
+
+
+def pcb_text(footprint_ids: Sequence[str]) -> str:
+    """A KiCad 10 board placing the given footprint lib_ids."""
+    blocks = []
+    for i, fp_id in enumerate(footprint_ids):
+        blocks.append(f'''\t(footprint "{fp_id}"
+\t\t(layer "F.Cu")
+\t\t(uuid "9999{i:04d}-8888-4777-8666-555544443333")
+\t\t(at {30.0 + i * 10} 40.0)
+\t\t(property "Reference" "U{i + 1}"
+\t\t\t(at 0 -3 0)
+\t\t\t(layer "F.SilkS")
+\t\t\t(uuid "aaaa{i:04d}-bbbb-4ccc-8ddd-eeeeffff1111")
+\t\t\t(effects
+\t\t\t\t(font
+\t\t\t\t\t(size 1 1)
+\t\t\t\t\t(thickness 0.15)
+\t\t\t\t)
+\t\t\t)
+\t\t)
+\t\t(pad "1" smd rect
+\t\t\t(at -1.5 0)
+\t\t\t(size 1.2 0.6)
+\t\t\t(layers "F.Cu" "F.Paste" "F.Mask")
+\t\t\t(uuid "bbbb{i:04d}-cccc-4ddd-8eee-ffff00001111")
+\t\t)
+\t)''')
+    body = "\n".join(blocks)
+    return (
+        "(kicad_pcb\n"
+        f"\t(version {PCB_VERSION})\n"
+        '\t(generator "pcbnew")\n'
+        '\t(generator_version "10.0")\n'
+        "\t(general\n\t\t(thickness 1.6)\n\t)\n"
+        '\t(paper "A4")\n'
+        f"{body}\n"
+        ")\n"
+    )
+
+
+def write_project(
+    project_dir: Path,
+    *,
+    symbols: Sequence[tuple] = (),
+    pcb_footprints: Sequence[str] = (),
+    name: str = "test",
+) -> Path:
+    """A project directory with a .kicad_pro, a schematic and optionally a board."""
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / f"{name}.kicad_pro").write_text(
+        '{\n  "board": {},\n  "meta": {"filename": "' + name + '.kicad_pro", "version": 3}\n}\n',
+        encoding="utf-8", newline="\n",
+    )
+    (project_dir / f"{name}.kicad_sch").write_text(
+        schematic_text(symbols), encoding="utf-8", newline="\n"
+    )
+    if pcb_footprints:
+        (project_dir / f"{name}.kicad_pcb").write_text(
+            pcb_text(pcb_footprints), encoding="utf-8", newline="\n"
+        )
+    return project_dir
