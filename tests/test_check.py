@@ -13,6 +13,7 @@ from src.core import library as lb
 from src.core import provenance as pv
 from src.core import table_gen as tg
 from tests import kicad_fixtures as kf
+from tests.conftest import filesystem_is_case_insensitive
 
 HAS_CLI = shutil.which("kicad-cli") is not None
 
@@ -204,11 +205,49 @@ def test_case_colliding_categories_are_an_error(lib_root):
 
 
 def test_case_colliding_symbols_in_one_category_are_an_error(lib_root):
+    """
+    The real-world path: two files on disk differing only by case.
+
+    Only possible on a case-sensitive filesystem. On Windows and macOS the
+    second write replaces the first, so the situation this detects cannot be
+    created in order to test it -- which is itself the reason it is an error.
+    test_case_collision_is_reported_from_the_index covers the detection on
+    every platform.
+    """
     d = lib_root / "symbols" / "Amp.kicad_symdir"
+    d.mkdir(parents=True)
+    if filesystem_is_case_insensitive(d):
+        pytest.skip("filesystem folds case; cannot create the two files")
     kf.write_symbol(d / "TPA3255.kicad_sym")
     kf.write_symbol(d / "tpa3255.kicad_sym")
     tg.generate_tables(lib_root)
     assert "symbol-case-collision" in codes(check.run(lib_root), check.ERROR)
+
+
+def test_case_collision_is_reported_from_the_index(lib_root):
+    """
+    Platform-independent: hand the auditor an index that already contains two
+    symbols differing only by case, bypassing the filesystem entirely.
+
+    This is not artificial -- it is precisely what a Linux machine commits and
+    a Windows machine then cannot check out.
+    """
+    index = lb.Library(root=lib_root)
+    index.categories["Amp"] = lb.Category(
+        name="Amp", has_symbol_dir=True, symbol_count=2
+    )
+    for name in ("TPA3255", "tpa3255"):
+        index.symbols.append(lb.Symbol(
+            category="Amp",
+            name=name,
+            path=lib_root / "symbols" / "Amp.kicad_symdir" / f"{name}.kicad_sym",
+            internal_name=name,
+            footprint_ref="",
+        ))
+    report = check.run(lib_root, use_kicad_cli=False, lib=index)
+    assert "symbol-case-collision" in codes(report, check.ERROR)
+    assert any("Windows or macOS" in f.message for f in report.errors)
+    assert report.exit_code == 1
 
 
 def test_a_category_shadowing_an_official_library_is_a_warning(lib_root):

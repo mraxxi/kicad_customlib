@@ -20,6 +20,24 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from tests import kicad_fixtures as kf  # noqa: E402
 
 
+def filesystem_is_case_insensitive(directory: Path) -> bool:
+    """
+    Whether `directory` lives on a filesystem that folds case.
+
+    Windows and macOS do by default, which means a test cannot create two
+    files differing only by case in order to check that we *detect* that
+    situation -- the second write just replaces the first. Probed rather than
+    inferred from sys.platform, because either platform can be configured
+    the other way.
+    """
+    probe = directory / "CaseProbe.tmp"
+    probe.write_text("x", encoding="utf-8")
+    try:
+        return (directory / "caseprobe.tmp").exists()
+    finally:
+        probe.unlink()
+
+
 @pytest.fixture
 def fixtures():
     """The builder module, for tests that want to construct bespoke files."""
