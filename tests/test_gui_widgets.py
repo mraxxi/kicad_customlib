@@ -38,8 +38,11 @@ def _display_available() -> bool:
 # Tcl on the hosted Windows runner dies after roughly 34 interpreter
 # create/destroy cycles ("Can't find a usable init.tcl"). That is a property of
 # that image, not of Windows, so the skip is limited to CI and a developer on a
-# real Windows desktop still gets the coverage. These tests check
-# platform-independent wiring, and Linux and macOS both run them.
+# real Windows desktop still gets the coverage.
+#
+# Worth knowing where this module actually runs: in CI only macOS exercises it,
+# because the Ubuntu runner has no display and skips on that basis anyway. Its
+# real coverage comes from macOS CI plus any developer machine with a display.
 _WINDOWS_CI = sys.platform.startswith("win") and os.environ.get("CI") == "true"
 
 pytestmark = [
@@ -47,7 +50,7 @@ pytestmark = [
     pytest.mark.skipif(
         _WINDOWS_CI,
         reason="Tcl on the Windows CI image fails after many interpreter "
-               "create/destroy cycles; covered on Linux and macOS",
+               "create/destroy cycles; exercised by macOS CI and local runs",
     ),
 ]
 

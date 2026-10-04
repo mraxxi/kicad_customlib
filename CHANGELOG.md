@@ -17,7 +17,9 @@ tracked by git history, not here.
   workaround and hung every macOS job indefinitely, so per-test roots — the
   configuration known to pass on Linux and macOS — are kept, and the Tk widget
   tests skip on Windows *CI only*. A developer on a real Windows desktop still
-  runs them.
+  runs them. In CI the module is exercised by macOS alone, since the Ubuntu
+  runner has no display and skips it on that basis; Linux coverage comes from
+  running the suite locally.
 - The stale-tables banner is anchored to an explicit toolbar reference instead
   of `winfo_children()[0]`. The old form was correct in practice, since the
   toolbar is the first widget created with the root as parent, but it tied the
