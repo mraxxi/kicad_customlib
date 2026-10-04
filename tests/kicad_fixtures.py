@@ -205,8 +205,11 @@ def footprint_text(
         "\t)",
     ]
     for p in paths:
+        # KiCad escapes backslashes inside quoted tokens; a raw Windows path
+        # written verbatim would be an invalidly-escaped file.
+        esc = p.replace("\\", "\\\\").replace('"', '\\"')
         lines += [
-            f'\t(model "{p}"',
+            f'\t(model "{esc}"',
             f"\t\t(offset",
             f"\t\t\t(xyz {offset[0]} {offset[1]} {offset[2]})",
             "\t\t)",
