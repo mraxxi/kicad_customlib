@@ -431,6 +431,37 @@ def retarget_extends(text: str, old_parent: str, new_parent: str) -> Tuple[str, 
     return apply_edits(text, edits), len(edits)
 
 
+def extract_symbol_file(text: str, name: str) -> str:
+    """
+    Build a single-symbol .kicad_sym holding just `name`.
+
+    Used to split a multi-symbol vendor bundle or project cache library into
+    the one-symbol-per-file form every official library uses (AGENTS.md 6.1).
+    The library envelope -- version, generator, generator_version -- is
+    carried over verbatim, and the symbol block is copied byte for byte, so
+    pins, graphics and UUIDs are untouched. Top-level symbols are indented one
+    tab both before and after the split, so the inner indentation stays valid.
+    """
+    r_open, _r_close = root_node(text)
+    head = node_head(text, r_open)
+    span = find_symbol(text, name)
+    if span is None:
+        raise SExprError(f"symbol {name!r} not found")
+
+    envelope = [
+        text[o : c + 1]
+        for h, o, c in children(text, r_open)
+        if h != "symbol"
+    ]
+    block = text[span[0] : span[1] + 1]
+
+    lines = [f"({head}"]
+    lines += [f"\t{item}" for item in envelope]
+    lines.append(f"\t{block}")
+    lines.append(")")
+    return "\n".join(lines) + "\n"
+
+
 def footprint_span(text: str) -> Tuple[str, int, int]:
     """(name, open, close) of the single (footprint "NAME" ...) in a .kicad_mod."""
     open_idx, close_idx = root_node(text)
