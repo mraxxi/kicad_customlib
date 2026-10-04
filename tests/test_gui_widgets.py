@@ -38,12 +38,38 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def tk_root():
+@pytest.fixture(scope="session")
+def _tk_session():
+    """
+    One Tk interpreter for the whole session.
+
+    Creating and destroying one per test exhausted Tcl on a Windows CI runner:
+    34 tests passed and the 35th failed with "Can't find a usable init.tcl".
+    One interpreter, reused, is both more robust and faster.
+    """
     root = tk.Tk()
     root.withdraw()
     yield root
     root.destroy()
+
+
+def _clear(root) -> None:
+    """Return the shared interpreter to a clean slate between tests."""
+    for child in list(root.winfo_children()):
+        child.destroy()
+    # LibraryManagerApp installs a menubar on the root. Clear it with an
+    # empty string, which detaches it without creating another child widget.
+    try:
+        root.config(menu="")
+    except tk.TclError:
+        pass
+
+
+@pytest.fixture
+def tk_root(_tk_session):
+    _clear(_tk_session)
+    yield _tk_session
+    _clear(_tk_session)
 
 
 @pytest.fixture
@@ -252,6 +278,42 @@ def test_app_constructs_against_an_empty_library(tk_root, lib_root):
     from src.gui.app import LibraryManagerApp
     app = LibraryManagerApp(tk_root, lib_root)
     assert app.browser.category_list.size() == 1      # just [All categories]
+
+
+def test_app_shows_the_stale_banner_without_a_pack_error(tk_root, lib_root):
+    """
+    Regression: refresh() packed the banner `after=winfo_children()[0]`, which
+    assumed the toolbar was the root's first child. Once a menubar or anything
+    else took that slot, Tk raised "window ... isn't packed". The banner is now
+    anchored to an explicit reference.
+    """
+    from src.gui.app import LibraryManagerApp
+    kf.write_symbol(lib_root / "symbols" / "C.kicad_symdir" / "S.kicad_sym")
+    app = LibraryManagerApp(tk_root, lib_root)          # tables are stale
+    assert app.controller.tables_are_stale
+    app.refresh()                                        # must not raise
+    assert app.banner.winfo_manager() == "pack"
+    # Tk resolves `after` into pack order rather than reporting it back, so
+    # assert the ordering: the banner sits immediately below the toolbar.
+    order = tk_root.pack_slaves()
+    assert order.index(app.banner) == order.index(app.toolbar) + 1
+
+
+def test_app_hides_the_stale_banner_once_the_tables_are_current(tk_root, control):
+    from src.gui.app import LibraryManagerApp
+    app = LibraryManagerApp(tk_root, control.root)
+    assert app.controller.tables_are_stale is False
+    app.refresh()
+    assert app.banner.winfo_manager() == ""
+
+
+def test_app_can_be_constructed_twice_in_one_interpreter(tk_root, control):
+    """The shared Tk session reuses one interpreter, so this must be safe."""
+    from src.gui.app import LibraryManagerApp
+    LibraryManagerApp(tk_root, control.root)
+    second = LibraryManagerApp(tk_root, control.root)
+    second.refresh()
+    assert second.browser.category_list.size() == 3
 
 
 def test_app_shows_details_for_a_selected_row(tk_root, control):

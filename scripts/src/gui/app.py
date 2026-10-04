@@ -64,7 +64,12 @@ class LibraryManagerApp:
 
     # -- construction -----------------------------------------------------
     def _build(self) -> None:
-        toolbar = ttk.Frame(self.root, padding=(10, 8))
+        # Kept as an attribute because the stale-tables banner packs itself
+        # directly after it. Using winfo_children()[0] as the anchor would
+        # break as soon as anything else became the root's first child -- a
+        # menubar, for instance.
+        self.toolbar = ttk.Frame(self.root, padding=(10, 8))
+        toolbar = self.toolbar
         toolbar.pack(fill=tk.X)
         ttk.Label(toolbar, text="KiCad Custom Library Manager",
                   font=self._bold()).pack(side=tk.LEFT)
@@ -173,7 +178,7 @@ class LibraryManagerApp:
         self.status.set_counts(self.controller.counts_summary())
         if self.controller.tables_are_stale:
             if not self.banner.winfo_ismapped():
-                self.banner.pack(fill=tk.X, after=self.root.winfo_children()[0])
+                self.banner.pack(fill=tk.X, after=self.toolbar)
         else:
             self.banner.pack_forget()
         if self.controller.provenance_error:

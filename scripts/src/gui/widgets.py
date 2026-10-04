@@ -65,35 +65,6 @@ class StatusBar(ttk.Frame):
         self._detail.set(summary)
 
 
-class StaleBanner(ttk.Frame):
-    """Shown when the generated tables no longer match the directories."""
-
-    def __init__(self, parent: tk.Misc, on_regenerate: Callable[[], None]):
-        super().__init__(parent, padding=(8, 6))
-        ttk.Label(
-            self,
-            text="The master library tables are out of date.",
-            font=self._bold(),
-        ).pack(side=tk.LEFT)
-        ttk.Button(self, text="Regenerate", command=on_regenerate).pack(
-            side=tk.RIGHT
-        )
-
-    @staticmethod
-    def _bold() -> tkfont.Font:
-        f = tkfont.nametofont("TkDefaultFont").copy()
-        f.configure(weight="bold")
-        return f
-
-    def set_visible(self, visible: bool) -> None:
-        if visible:
-            if not self.winfo_ismapped():
-                self.pack(fill=tk.X, before=self.master.winfo_children()[0]
-                          if self.master.winfo_children() else None)
-        else:
-            self.pack_forget()
-
-
 class CategoryPicker(ttk.Frame):
     """
     A read-only combobox of existing categories, plus an entry that creates
