@@ -308,19 +308,26 @@ def test_set_or_add_model_handles_both_the_present_and_absent_cases():
 
 
 # --------------------------------------------------------------------------
-# Deprecated shims still behave
+# Every symbol in a multi-symbol file, not just the first
 # --------------------------------------------------------------------------
 
-def test_deprecated_patch_symbol_footprint_now_patches_every_symbol(tmp_path):
+def test_footprint_can_be_set_on_every_symbol_of_a_multi_symbol_file(tmp_path):
     """
-    Regression for plan problem #9: the old implementation patched only the
-    first Footprint property in the file.
+    Regression for plan problem #9: the old patch_symbol_footprint used a
+    single regex over the whole file, so only the first symbol's Footprint
+    property was ever updated and the rest kept the vendor's value.
     """
     p = tmp_path / "multi.kicad_sym"
     kf.write_multi_symbol(p, ["A", "B", "C"], footprint_prefix="Old")
-    assert sx.patch_symbol_footprint(p, "New:FP") is True
     text = sx.read_text(p)
+
+    edits = []
+    for _name, open_idx, _close in sx.top_level_symbols(text):
+        edits += sx.set_property_edits(text, open_idx, "Footprint", "New:FP")
+    sx.write_text(p, sx.apply_edits(text, edits))
+
+    out = sx.read_text(p)
     values = [
-        sx.get_property(text, o, "Footprint") for _n, o, _c in sx.top_level_symbols(text)
+        sx.get_property(out, o, "Footprint") for _n, o, _c in sx.top_level_symbols(out)
     ]
     assert values == ["New:FP"] * 3

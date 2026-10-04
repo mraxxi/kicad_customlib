@@ -1,343 +1,501 @@
 """
-Desktop GUI interface for KICAD_CUSTOM_LIB Manager.
-Built with Python's native Tkinter (zero external dependencies).
+The application shell.
+
+A thin layer over the Controller: menus and buttons gather intent, the
+Controller turns it into an ops.Plan, the user sees the plan, and only then
+is anything written.
+
+Routine outcomes go to the status bar rather than a message box, so a normal
+import no longer requires dismissing a dialog. Message boxes are kept for
+errors and for confirmations.
 """
 
+from __future__ import annotations
+
+import json
+import subprocess
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Optional
 
-from ..core.manifest import ManifestManager
-from ..core.table_gen import generate_tables
-from ..core.packager import ProjectPackager
+from ..core import check as check_mod
+from ..core import ops
+from .browser import LibraryBrowser
+from .controller import Controller, Row, parse_iid
+from .import_dialog import ImportDialog
+from .rename_dialog import CategoryRenameDialog, MoveDialog, RenameDialog
+from .widgets import PlanPreview, StatusBar, apply_scaling, modal
+
+CONFIG_DIR = Path.home() / ".config" / "kicad_customlib"
+CONFIG_FILE = CONFIG_DIR / "gui.json"
+
+
+def _load_config() -> dict:
+    """GUI preferences live outside the repo so they are never committed."""
+    try:
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_config(data: dict) -> None:
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass  # a preference failing to save is not worth interrupting the user
 
 
 class LibraryManagerApp:
     def __init__(self, root: tk.Tk, lib_root: Path):
         self.root = root
-        self.lib_root = lib_root.resolve()
-        self.manifest = ManifestManager(self.lib_root)
-        self.packager = ProjectPackager(self.lib_root)
+        self.controller = Controller(lib_root)
+        self.config = _load_config()
 
-        self.root.title("KiCad Custom Library Manager")
-        self.root.geometry("980x640")
-        self.root.minsize(800, 500)
+        root.title(f"KiCad Custom Library Manager - {self.controller.root.name}")
+        root.geometry("1180x720")
+        root.minsize(900, 560)
+        apply_scaling(root)
 
-        # Style configuration
-        self.style = ttk.Style()
-        self.style.theme_use("clam")
+        self._build()
+        self.refresh()
 
-        self._build_ui()
-        self.refresh_data()
+    # -- construction -----------------------------------------------------
+    def _build(self) -> None:
+        toolbar = ttk.Frame(self.root, padding=(10, 8))
+        toolbar.pack(fill=tk.X)
+        ttk.Label(toolbar, text="KiCad Custom Library Manager",
+                  font=self._bold()).pack(side=tk.LEFT)
+        ttk.Label(toolbar, text=str(self.controller.root)).pack(side=tk.LEFT, padx=12)
 
-    def _build_ui(self):
-        # Top Header Frame
-        header = ttk.Frame(self.root, padding="10")
-        header.pack(fill=tk.X)
+        ttk.Button(toolbar, text="Package project...",
+                   command=self.on_package).pack(side=tk.RIGHT)
+        ttk.Button(toolbar, text="Audit",
+                   command=self.on_audit).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(toolbar, text="Process staging",
+                   command=self.on_staging).pack(side=tk.RIGHT)
+        ttk.Button(toolbar, text="Import...",
+                   command=self.on_import).pack(side=tk.RIGHT, padx=6)
 
-        title_lbl = ttk.Label(
-            header,
-            text="KiCad Custom Library Manager",
-            font=("Helvetica", 14, "bold")
+        # The stale-tables banner sits between the toolbar and the browser.
+        self.banner = ttk.Frame(self.root, padding=(10, 6))
+        ttk.Label(self.banner,
+                  text="The master library tables are out of date.",
+                  font=self._bold()).pack(side=tk.LEFT)
+        ttk.Button(self.banner, text="Regenerate now",
+                   command=self.on_generate).pack(side=tk.RIGHT)
+
+        content = ttk.Frame(self.root, padding=(10, 0))
+        content.pack(fill=tk.BOTH, expand=True)
+
+        # The details pane is created before the browser: constructing the
+        # browser immediately fires a selection callback, which writes here.
+        details = ttk.LabelFrame(content, text="Details", padding=8)
+        self.details = tk.Text(details, height=7, wrap=tk.WORD,
+                               font=tkfont.nametofont("TkFixedFont"))
+        self.details.pack(fill=tk.X)
+        self.details.config(state=tk.DISABLED)
+
+        self.browser = LibraryBrowser(
+            content, self.controller,
+            on_select=self.on_row_selected,
+            on_activate=lambda row: self.on_rename(),
+            on_item_menu=self._show_item_menu,
+            on_category_menu=self._show_category_menu,
         )
-        title_lbl.pack(side=tk.LEFT)
+        self.browser.pack(fill=tk.BOTH, expand=True)
+        details.pack(fill=tk.X, pady=(8, 8))
 
-        path_lbl = ttk.Label(
-            header,
-            text=f"Path: {self.lib_root.name}",
-            font=("Helvetica", 9),
-            foreground="#666666"
-        )
-        path_lbl.pack(side=tk.LEFT, padx=15)
+        self.status = StatusBar(self.root)
+        self.status.pack(fill=tk.X)
 
-        gen_btn = ttk.Button(
-            header,
-            text="Regenerate Tables",
-            command=self.on_generate_tables
-        )
-        gen_btn.pack(side=tk.RIGHT)
+        self._build_menus()
+        self._bind_keys()
 
-        health_btn = ttk.Button(
-            header,
-            text="Audit Health",
-            command=self.on_audit_health
-        )
-        health_btn.pack(side=tk.RIGHT, padx=5)
+    @staticmethod
+    def _bold() -> tkfont.Font:
+        f = tkfont.nametofont("TkDefaultFont").copy()
+        f.configure(weight="bold")
+        return f
 
-        # Main Paned Window (Left Categories, Right Parts)
-        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+    def _build_menus(self) -> None:
+        self.item_menu = tk.Menu(self.root, tearoff=0)
+        self.item_menu.add_command(label="Rename...", command=self.on_rename)
+        self.item_menu.add_command(label="Move to category...", command=self.on_move)
+        self.item_menu.add_separator()
+        self.item_menu.add_command(label="Copy name", command=self.on_copy_name)
+        self.item_menu.add_command(label="Open containing folder",
+                                   command=self.on_open_folder)
+        self.item_menu.add_separator()
+        self.item_menu.add_command(label="Delete...", command=self.on_delete)
 
-        # Left Frame: Category List
-        left_frame = ttk.Frame(paned, padding="5")
-        paned.add(left_frame, weight=1)
+        self.category_menu = tk.Menu(self.root, tearoff=0)
+        self.category_menu.add_command(label="Rename category...",
+                                       command=self.on_rename_category)
+        self.category_menu.add_command(label="Import into this category...",
+                                       command=self.on_import_here)
 
-        cat_lbl = ttk.Label(left_frame, text="Categories", font=("Helvetica", 10, "bold"))
-        cat_lbl.pack(anchor=tk.W, pady=(0, 5))
+        menubar = tk.Menu(self.root)
+        library = tk.Menu(menubar, tearoff=0)
+        library.add_command(label="Import...", accelerator="Ctrl+I",
+                            command=self.on_import)
+        library.add_command(label="Process staging folder",
+                            command=self.on_staging)
+        library.add_separator()
+        library.add_command(label="Regenerate tables", command=self.on_generate)
+        library.add_command(label="Audit", command=self.on_audit)
+        library.add_separator()
+        library.add_command(label="Package project...", command=self.on_package)
+        library.add_separator()
+        library.add_command(label="Quit", command=self.root.destroy)
+        menubar.add_cascade(label="Library", menu=library)
 
-        self.cat_listbox = tk.Listbox(
-            left_frame,
-            selectmode=tk.SINGLE,
-            font=("Monospace", 10),
-            exportselection=False
-        )
-        self.cat_listbox.pack(fill=tk.BOTH, expand=True)
-        self.cat_listbox.bind("<<ListboxSelect>>", self.on_category_select)
+        item = tk.Menu(menubar, tearoff=0)
+        item.add_command(label="Rename...", accelerator="F2", command=self.on_rename)
+        item.add_command(label="Move to category...", command=self.on_move)
+        item.add_command(label="Delete...", accelerator="Del", command=self.on_delete)
+        menubar.add_cascade(label="Item", menu=item)
+        self.root.config(menu=menubar)
 
-        # Right Frame: Parts Table & Details
-        right_frame = ttk.Frame(paned, padding="5")
-        paned.add(right_frame, weight=3)
+    def _bind_keys(self) -> None:
+        self.root.bind("<Control-i>", lambda _e: self.on_import())
+        self.root.bind("<F2>", lambda _e: self.on_rename())
+        self.root.bind("<Delete>", lambda _e: self.on_delete())
+        self.root.bind("<Control-f>", lambda _e: self.browser.focus_search())
+        self.root.bind("<F5>", lambda _e: self.refresh())
 
-        parts_lbl = ttk.Label(right_frame, text="Components", font=("Helvetica", 10, "bold"))
-        parts_lbl.pack(anchor=tk.W, pady=(0, 5))
-
-        # Parts Treeview Table
-        cols = ("Part Name", "Category", "Symbol", "Footprint", "3D Model")
-        self.parts_tree = ttk.Treeview(right_frame, columns=cols, show="headings", height=10)
-        for c in cols:
-            self.parts_tree.heading(c, text=c)
-            self.parts_tree.column(c, width=120)
-        self.parts_tree.column("Part Name", width=160)
-        self.parts_tree.column("Category", width=180)
-        self.parts_tree.pack(fill=tk.BOTH, expand=True)
-        self.parts_tree.bind("<<TreeviewSelect>>", self.on_part_select)
-
-        # Details Panel
-        self.details_frame = ttk.LabelFrame(right_frame, text="Part Details", padding="8")
-        self.details_frame.pack(fill=tk.X, pady=(8, 0))
-
-        self.details_txt = tk.Text(
-            self.details_frame,
-            height=5,
-            state=tk.DISABLED,
-            font=("Monospace", 9),
-            bg="#f8f9fa"
-        )
-        self.details_txt.pack(fill=tk.X)
-
-        # Bottom Action Bar
-        action_bar = ttk.Frame(self.root, padding="10")
-        action_bar.pack(fill=tk.X)
-
-        add_btn = ttk.Button(
-            action_bar,
-            text="+ Ingest Part / ZIP",
-            command=self.on_ingest_dialog
-        )
-        add_btn.pack(side=tk.LEFT)
-
-        move_btn = ttk.Button(
-            action_bar,
-            text="Move / Reorganize...",
-            command=self.on_move_dialog
-        )
-        move_btn.pack(side=tk.LEFT, padx=5)
-
-        sync_staging_btn = ttk.Button(
-            action_bar,
-            text="Process staging-temp/",
-            command=self.on_sync_staging
-        )
-        sync_staging_btn.pack(side=tk.LEFT, padx=5)
-
-        pkg_btn = ttk.Button(
-            action_bar,
-            text="Package for Project (Export)",
-            command=self.on_package_project_dialog
-        )
-        pkg_btn.pack(side=tk.RIGHT)
-
-    def refresh_data(self):
-        """Reloads manifest and repopulates lists."""
-        self.manifest = ManifestManager(self.lib_root)
-        categories = self.manifest.list_categories()
-
-        self.cat_listbox.delete(0, tk.END)
-        self.cat_listbox.insert(tk.END, "[All Categories]")
-        for c in categories:
-            count = len(self.manifest.list_parts(c))
-            self.cat_listbox.insert(tk.END, f"{c} ({count})")
-
-        self.cat_listbox.select_set(0)
-        self.populate_parts_table(None)
-
-    def populate_parts_table(self, category: Optional[str]):
-        """Fills parts treeview with components."""
-        for item in self.parts_tree.get_children():
-            self.parts_tree.delete(item)
-
-        parts = self.manifest.list_parts(category)
-        for part_name, record in parts.items():
-            cat = record.get("category", "-")
-            files = record.get("files", {})
-            sym_ok = "✓" if "symbol" in files and (self.lib_root / files["symbol"]).exists() else "✗"
-            fp_ok = "✓" if "footprint" in files and (self.lib_root / files["footprint"]).exists() else "✗"
-            step_ok = "✓" if "model_3d" in files and (self.lib_root / files["model_3d"]).exists() else "✗"
-
-            self.parts_tree.insert(
-                "",
-                tk.END,
-                values=(part_name, cat, sym_ok, fp_ok, step_ok),
-                tags=(part_name,)
-            )
-
-    def on_category_select(self, event):
-        sel = self.cat_listbox.curselection()
-        if not sel:
-            return
-        idx = sel[0]
-        if idx == 0:
-            self.populate_parts_table(None)
+    # -- state ------------------------------------------------------------
+    def refresh(self) -> None:
+        self.controller.refresh()
+        self.browser.refresh()
+        self.status.set_counts(self.controller.counts_summary())
+        if self.controller.tables_are_stale:
+            if not self.banner.winfo_ismapped():
+                self.banner.pack(fill=tk.X, after=self.root.winfo_children()[0])
         else:
-            cat_text = self.cat_listbox.get(idx)
-            cat_name = cat_text.split(" (")[0]
-            self.populate_parts_table(cat_name)
+            self.banner.pack_forget()
+        if self.controller.provenance_error:
+            self.status.set(f"provenance.json problem: "
+                            f"{self.controller.provenance_error}")
 
-    def on_part_select(self, event):
-        sel = self.parts_tree.selection()
-        if not sel:
+    def on_row_selected(self, row: Optional[Row]) -> None:
+        self.details.config(state=tk.NORMAL)
+        self.details.delete("1.0", tk.END)
+        if row is not None:
+            self.details.insert("1.0", self.controller.details(row))
+        self.details.config(state=tk.DISABLED)
+
+    def _require_row(self) -> Optional[Row]:
+        row = self.browser.selected_row()
+        if row is None:
+            self.status.set("Select a single item first.")
+        return row
+
+    def _show_item_menu(self, x: int, y: int) -> None:
+        if self.browser.selected_rows():
+            self.item_menu.tk_popup(x, y)
+
+    def _show_category_menu(self, category: str, x: int, y: int) -> None:
+        self._menu_category = category
+        self.category_menu.tk_popup(x, y)
+
+    # -- actions ----------------------------------------------------------
+    def on_generate(self) -> None:
+        plan = self.controller.plan_generate()
+        if plan.is_empty:
+            self.status.set("Tables are already up to date.")
             return
-        item = self.parts_tree.item(sel[0])
-        part_name = item["values"][0]
-        record = self.manifest.get_part(part_name)
-        if not record:
+        if not PlanPreview.confirm(self.root, plan, apply_label="Regenerate"):
             return
+        result = self.controller.apply(plan)
+        self.refresh()
+        self.status.set("Regenerated the master tables." if result.ok
+                        else "Could not regenerate the tables.")
 
-        self.details_txt.config(state=tk.NORMAL)
-        self.details_txt.delete("1.0", tk.END)
-
-        files = record.get("files", {})
-        info = (
-            f"Part: {part_name}\n"
-            f"Category: {record.get('category')}\n"
-            f"Footprint ID: {record.get('footprint_identifier') or 'Not set'}\n"
-            f"Import Source: {record.get('original_import_name')} ({record.get('import_date', '')[:10]})\n"
-            f"Symbol File:    {files.get('symbol', 'None')}\n"
-            f"Footprint File: {files.get('footprint', 'None')}\n"
-            f"3D Model File:  {files.get('model_3d', 'None')}"
+    def on_import(self, category: str = "") -> None:
+        remembered = category or self.config.get("last_category", "")
+        dialog = ImportDialog(
+            self.root, self.controller,
+            initial_category=remembered,
+            on_done=self._after_import,
         )
-        self.details_txt.insert(tk.END, info)
-        self.details_txt.config(state=tk.DISABLED)
+        self.root.wait_window(dialog)
+        chosen = dialog.category_picker.get()
+        if chosen:
+            self.config["last_category"] = chosen
+            _save_config(self.config)
+        self.refresh()
 
-    def on_generate_tables(self):
-        sym_p, fp_p = generate_tables(self.lib_root)
-        messagebox.showinfo(
-            "Success",
-            f"Generated Master Tables:\n- {sym_p.name}\n- {fp_p.name}\n\nUsing ${{KICAD_CUSTOM_LIB}}."
+    def on_import_here(self) -> None:
+        self.on_import(getattr(self, "_menu_category", ""))
+
+    def _after_import(self, message: str) -> None:
+        self.refresh()
+        self.status.set(message)
+
+    def on_rename(self) -> None:
+        row = self._require_row()
+        if row is None:
+            return
+        dialog = RenameDialog(self.root, self.controller, row)
+        self.root.wait_window(dialog)
+        if dialog.applied:
+            self.refresh()
+            self.status.set(getattr(dialog, "result_message", "Renamed."))
+
+    def on_move(self) -> None:
+        row = self._require_row()
+        if row is None:
+            return
+        dialog = MoveDialog(self.root, self.controller, row)
+        self.root.wait_window(dialog)
+        if dialog.applied:
+            self.refresh()
+            self.status.set(getattr(dialog, "result_message", "Moved."))
+
+    def on_rename_category(self) -> None:
+        category = getattr(self, "_menu_category", "")
+        if not category:
+            return
+        dialog = CategoryRenameDialog(self.root, self.controller, category)
+        self.root.wait_window(dialog)
+        if dialog.applied:
+            self.refresh()
+            self.status.set(getattr(dialog, "result_message", "Category renamed."))
+
+    def on_delete(self) -> None:
+        rows = self.browser.selected_rows()
+        if not rows:
+            self.status.set("Select something to delete first.")
+            return
+        plan = self.controller.plan_delete(rows)
+        if not PlanPreview.confirm(self.root, plan, apply_label="Delete"):
+            return
+        result = self.controller.apply(plan)
+        self.refresh()
+        self.status.set(f"Deleted {len(result.applied)} file(s)." if result.ok
+                        else "Delete failed; see the details above.")
+
+    def on_copy_name(self) -> None:
+        rows = self.browser.selected_rows()
+        if not rows:
+            return
+        text = "\n".join(
+            f"{r.category}:{r.name}" if r.kind != "model" else r.name for r in rows
         )
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status.set(f"Copied {len(rows)} name(s) to the clipboard.")
 
-    def on_audit_health(self):
-        report = self.manifest.audit_health()
-        if report["healthy"]:
-            messagebox.showinfo("Health Audit", f"All {report['total_parts']} parts are healthy! Zero issues found.")
-        else:
-            issue_str = "\n".join([f"• [{i['part']}] {i['detail']}" for i in report["issues"][:10]])
-            if len(report["issues"]) > 10:
-                issue_str += f"\n...and {len(report['issues']) - 10} more."
-            messagebox.showwarning("Health Audit Issues Found", issue_str)
-
-    def on_ingest_dialog(self):
-        file_path = filedialog.askopenfilename(
-            title="Select Component ZIP or Folder",
-            filetypes=[("Archives / KiCad", "*.zip *.kicad_sym *.kicad_mod *.step"), ("All Files", "*.*")]
-        )
-        if not file_path:
+    def on_open_folder(self) -> None:
+        row = self._require_row()
+        if row is None or row.path is None:
             return
-
-        # Category input dialog
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Ingest Component")
-        dialog.geometry("400x180")
-        dialog.transient(self.root)
-
-        ttk.Label(dialog, text="Target Category (e.g. TI-TPAxxx_AUDIO-AMP):").pack(pady=(15, 5))
-        cat_entry = ttk.Entry(dialog, width=35)
-        cat_entry.pack(pady=5)
-        cat_entry.focus()
-
-        def do_ingest():
-            cat = cat_entry.get().strip()
-            if not cat:
-                messagebox.showerror("Error", "Category name cannot be empty")
-                return
-            try:
-                record = self.manifest.ingest_part(Path(file_path), cat)
-                dialog.destroy()
-                self.refresh_data()
-                messagebox.showinfo("Success", f"Ingested '{record['display_name']}' into category '{cat}'")
-            except Exception as e:
-                messagebox.showerror("Ingest Failed", str(e))
-
-        ttk.Button(dialog, text="Ingest", command=do_ingest).pack(pady=15)
-
-    def on_move_dialog(self):
-        sel = self.parts_tree.selection()
-        if not sel:
-            messagebox.showwarning("Selection Required", "Please select a part to move.")
-            return
-
-        part_name = self.parts_tree.item(sel[0])["values"][0]
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title(f"Move {part_name}")
-        dialog.geometry("400x180")
-        dialog.transient(self.root)
-
-        ttk.Label(dialog, text=f"Move '{part_name}' to Category:").pack(pady=(15, 5))
-        cat_entry = ttk.Entry(dialog, width=35)
-        cat_entry.pack(pady=5)
-        cat_entry.focus()
-
-        def do_move():
-            new_cat = cat_entry.get().strip()
-            if not new_cat:
-                messagebox.showerror("Error", "Category name cannot be empty")
-                return
-            ok = self.manifest.move_part(part_name, new_cat)
-            if ok:
-                dialog.destroy()
-                self.refresh_data()
-                messagebox.showinfo("Success", f"Moved '{part_name}' to category '{new_cat}'")
-            else:
-                messagebox.showerror("Error", "Failed to move part.")
-
-        ttk.Button(dialog, text="Move Part", command=do_move).pack(pady=15)
-
-    def on_sync_staging(self):
-        intake_dir = self.lib_root / "staging-temp" / "intake"
-        if not intake_dir.exists() or not any(intake_dir.iterdir()):
-            messagebox.showinfo("Staging Empty", f"No items found in {intake_dir}.\nDrop category folders with parts there to batch-sync.")
-            return
-
-        count = 0
-        for cat_dir in intake_dir.iterdir():
-            if cat_dir.is_dir():
-                cat_name = cat_dir.name
-                for part_dir in cat_dir.iterdir():
-                    if part_dir.is_dir():
-                        self.manifest.ingest_part(part_dir, cat_name)
-                        count += 1
-        self.refresh_data()
-        messagebox.showinfo("Staging Processed", f"Successfully ingested {count} parts from staging.")
-
-    def on_package_project_dialog(self):
-        proj_dir = filedialog.askdirectory(title="Select KiCad Project Directory to Package")
-        if not proj_dir:
-            return
-
+        folder = row.path.parent
         try:
-            res = self.packager.package_for_project(Path(proj_dir))
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder)])
+            elif sys.platform.startswith("win"):
+                subprocess.Popen(["explorer", str(folder)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
+        except OSError as exc:
+            messagebox.showerror("Could not open the folder", str(exc),
+                                 parent=self.root)
+            return
+        self.status.set(f"Opened {folder}")
+
+    def on_staging(self) -> None:
+        intake = self.controller.root / "staging-temp" / "intake"
+        if not intake.is_dir():
             messagebox.showinfo(
-                "Project Packaged",
-                f"Exported {len(res['packaged_symbols'])} symbols and {len(res['packaged_footprints'])} footprints to:\n{res['output_directory']}\n\nProject is now 100% self-contained!"
+                "Nothing staged",
+                f"Create {intake} and drop <Category>/<part> folders or ZIPs "
+                f"inside, then try again.",
+                parent=self.root,
             )
-        except Exception as e:
-            messagebox.showerror("Packaging Error", str(e))
+            return
+        jobs = [
+            (cat.name, item)
+            for cat in sorted(p for p in intake.iterdir() if p.is_dir())
+            for item in sorted(cat.iterdir())
+            if item.is_dir() or item.suffix.lower() == ".zip"
+        ]
+        if not jobs:
+            messagebox.showinfo("Nothing staged", f"{intake} is empty.",
+                                parent=self.root)
+            return
+
+        combined = ops.Plan(root=self.controller.root,
+                            title=f"Import {len(jobs)} staged item(s)")
+        previews = []
+        try:
+            for category, item in jobs:
+                try:
+                    preview = self.controller.prepare_import(item, category)
+                except Exception as exc:  # noqa: BLE001 -- one item must not stop the rest
+                    combined.warn(f"{item.name}: {exc}")
+                    continue
+                previews.append(preview)
+                combined.extend(preview.plan)
+
+            if not PlanPreview.confirm(self.root, combined, apply_label="Import all"):
+                return
+            result = self.controller.apply(combined)
+        finally:
+            for preview in previews:
+                preview.close()
+
+        self.refresh()
+        self.status.set(result.summary(self.controller.root).splitlines()[0])
+
+    def on_audit(self) -> None:
+        AuditDialog(self.root, self.controller, self.browser)
+
+    def on_package(self) -> None:
+        project = filedialog.askdirectory(
+            parent=self.root, title="Select the KiCad project to package")
+        if not project:
+            return
+        try:
+            plan, result = self.controller.plan_package(Path(project))
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Cannot package", str(exc), parent=self.root)
+            return
+
+        if not PlanPreview.confirm(
+            self.root, plan, apply_label="Package",
+        ):
+            return
+        applied = ops.apply(plan)
+        messagebox.showinfo(
+            "Packaged" if applied.ok else "Packaging incomplete",
+            result.summary() + "\n\n" + applied.summary(self.controller.root),
+            parent=self.root,
+        )
+        self.status.set(f"Packaged {len(result.packaged_symbols)} symbol(s) and "
+                        f"{len(result.packaged_footprints)} footprint(s).")
 
 
-def launch_gui(lib_root: Path):
-    root = tk.Tk()
-    app = LibraryManagerApp(root, lib_root)
+class AuditDialog(tk.Toplevel):
+    """A filterable, copyable list of findings; double-click jumps to the item."""
+
+    def __init__(self, parent: tk.Misc, controller: Controller,
+                 browser: LibraryBrowser):
+        super().__init__(parent)
+        self.title("Library audit")
+        self.geometry("1000x560")
+        self.controller = controller
+        self.browser = browser
+
+        body = ttk.Frame(self, padding=10)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        controls = ttk.Frame(body)
+        controls.pack(fill=tk.X, pady=(0, 6))
+        self.severity = tk.StringVar(value="all")
+        for label, value in (("All", "all"), ("Errors", check_mod.ERROR),
+                             ("Warnings", check_mod.WARNING), ("Notes", check_mod.INFO)):
+            ttk.Radiobutton(controls, text=label, value=value,
+                            variable=self.severity,
+                            command=self._repopulate).pack(side=tk.LEFT)
+        self.summary_label = ttk.Label(controls, text="Running...")
+        self.summary_label.pack(side=tk.RIGHT)
+
+        holder = ttk.Frame(body)
+        holder.pack(fill=tk.BOTH, expand=True)
+        scroll = ttk.Scrollbar(holder, orient=tk.VERTICAL)
+        self.tree = ttk.Treeview(
+            holder, columns=("Severity", "Code", "Where", "Message"),
+            show="headings", yscrollcommand=scroll.set,
+        )
+        scroll.config(command=self.tree.yview)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for name, width in (("Severity", 90), ("Code", 220), ("Where", 240),
+                            ("Message", 420)):
+            self.tree.heading(name, text=name)
+            self.tree.column(name, width=width, stretch=(name == "Message"))
+        self.tree.bind("<Double-1>", self._jump)
+        self.tree.bind("<<TreeviewSelect>>", self._show_remedy)
+
+        self.remedy = ttk.Label(body, text="", wraplength=940, justify=tk.LEFT)
+        self.remedy.pack(fill=tk.X, pady=(6, 0))
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(buttons, text="Re-run", command=self._run).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Copy all",
+                   command=self._copy_all).pack(side=tk.LEFT, padx=6)
+        ttk.Button(buttons, text="Close", command=self.destroy).pack(side=tk.RIGHT)
+
+        self.report: Optional[check_mod.Report] = None
+        modal(self, parent)
+        self.after(10, self._run)
+
+    def _run(self) -> None:
+        self.summary_label.config(text="Running...")
+        self.update_idletasks()
+        self.report = self.controller.audit()
+        counts = self.report.counts()
+        self.summary_label.config(
+            text=f"{counts[check_mod.ERROR]} error(s), "
+                 f"{counts[check_mod.WARNING]} warning(s), "
+                 f"{counts[check_mod.INFO]} note(s)"
+            + ("" if self.report.kicad_cli_used else "  (kicad-cli not found)")
+        )
+        self._repopulate()
+
+    def _repopulate(self) -> None:
+        self.tree.delete(*self.tree.get_children(""))
+        if self.report is None:
+            return
+        wanted = self.severity.get()
+        for index, finding in enumerate(self.report.sorted()):
+            if wanted != "all" and finding.severity != wanted:
+                continue
+            self.tree.insert("", tk.END, iid=str(index),
+                             values=(finding.severity, finding.code,
+                                     finding.where, finding.message))
+        self._findings = {
+            str(i): f for i, f in enumerate(self.report.sorted())
+        }
+
+    def _selected_finding(self):
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        return self._findings.get(selection[0])
+
+    def _show_remedy(self, _event=None) -> None:
+        finding = self._selected_finding()
+        self.remedy.config(text=f"Suggested fix: {finding.remedy}"
+                           if finding and finding.remedy else "")
+
+    def _jump(self, _event=None) -> None:
+        finding = self._selected_finding()
+        if finding is None or ":" not in finding.where:
+            return
+        category, name = finding.where.split(":", 1)
+        for kind in ("symbol", "footprint", "model"):
+            if self.browser.select_item(kind, category, name):
+                self.destroy()
+                return
+
+    def _copy_all(self) -> None:
+        if self.report is None:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(self.report.summary())
+
+
+def launch_gui(lib_root: Path) -> None:
+    try:
+        from tkinterdnd2 import TkinterDnD  # type: ignore
+        root = TkinterDnD.Tk()
+    except Exception:  # noqa: BLE001 -- drag-and-drop is optional
+        root = tk.Tk()
+    LibraryManagerApp(root, Path(lib_root))
     root.mainloop()

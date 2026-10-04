@@ -34,10 +34,6 @@ from .ops import ConflictPolicy, Plan, apply
 from .packager import ProjectPackager
 from .table_gen import generate_tables, scan_libraries
 
-# Deprecated: the manifest-era API. Still imported by the CLI and GUI, which
-# Phase 2 and Phase 3 replace with plan/apply call sites.
-from .manifest import ManifestManager
-
 __all__ = [
     # modules
     "check", "ingest", "library", "naming", "ops", "packager", "provenance",
@@ -45,6 +41,4 @@ __all__ = [
     # common entry points
     "Library", "scan", "Plan", "apply", "ConflictPolicy",
     "generate_tables", "scan_libraries", "ProjectPackager",
-    # deprecated
-    "ManifestManager",
 ]
