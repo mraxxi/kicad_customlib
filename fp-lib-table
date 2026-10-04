@@ -1,6 +1,7 @@
 (fp_lib_table
 	(version 7)
 	(lib (name "CUSTOM-Generic-Audio-Conns") (type "KiCad") (uri "${KICAD_CUSTOM_LIB}/footprints/CUSTOM-Generic-Audio-Conns.pretty") (options "") (descr "Custom footprint library CUSTOM-Generic-Audio-Conns"))
+	(lib (name "CUSTOM_Generic-Heatsinks") (type "KiCad") (uri "${KICAD_CUSTOM_LIB}/footprints/CUSTOM_Generic-Heatsinks.pretty") (options "") (descr "Custom footprint library CUSTOM_Generic-Heatsinks"))
 	(lib (name "CUSTOM_Sagami-inductors") (type "KiCad") (uri "${KICAD_CUSTOM_LIB}/footprints/CUSTOM_Sagami-inductors.pretty") (options "") (descr "Custom footprint library CUSTOM_Sagami-inductors"))
 	(lib (name "TPAxxxx-TI_Audio_Amps") (type "KiCad") (uri "${KICAD_CUSTOM_LIB}/footprints/TPAxxxx-TI_Audio_Amps.pretty") (options "") (descr "Custom footprint library TPAxxxx-TI_Audio_Amps"))
 )
