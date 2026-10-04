@@ -29,7 +29,8 @@ from .browser import LibraryBrowser
 from .controller import Controller, Row, parse_iid
 from .import_dialog import ImportDialog
 from .rename_dialog import CategoryRenameDialog, MoveDialog, RenameDialog
-from .widgets import PlanPreview, StatusBar, apply_scaling, modal
+from .sync_dialog import SyncDialog
+from .widgets import GitStrip, PlanPreview, StatusBar, apply_scaling, modal
 
 MAIN_MIN_WIDTH = 900
 MAIN_MIN_HEIGHT = 560
@@ -53,7 +54,9 @@ class LibraryManagerApp:
         )
         self._save_job: Optional[str] = None
 
-        root.title(f"KiCad Custom Library Manager - {self.controller.root.name}")
+        self.base_title = (f"KiCad Custom Library Manager \u2014 "
+                           f"{self.controller.root.name}")
+        root.title(self.base_title)
         root.minsize(MAIN_MIN_WIDTH, MAIN_MIN_HEIGHT)
         apply_scaling(root)
         self.theme_name, self.palette = theme.apply_theme(root)
@@ -95,6 +98,10 @@ class LibraryManagerApp:
                   font=self._bold()).pack(side=tk.LEFT)
         ttk.Button(self.banner, text="Regenerate now",
                    command=self.on_generate).pack(side=tk.RIGHT)
+
+        # The git strip sits under the toolbar, and hides itself entirely
+        # when the library is not a git repository.
+        self.git_strip = GitStrip(self.root, on_open=self.on_sync)
 
         content = ttk.Frame(self.root, padding=(10, 0))
         content.pack(fill=tk.BOTH, expand=True)
@@ -267,6 +274,9 @@ class LibraryManagerApp:
         library.add_separator()
         library.add_command(label="Package project...", command=self.on_package)
         library.add_separator()
+        library.add_command(label="Sync with the remote...", accelerator="Ctrl+R",
+                            command=self.on_sync)
+        library.add_separator()
         library.add_command(label="Reset window layout", command=self.on_reset_layout)
         library.add_separator()
         library.add_command(label="Quit", accelerator="Ctrl+Q", command=self.on_close)
@@ -286,6 +296,7 @@ class LibraryManagerApp:
         self.root.bind("<Control-f>", lambda _e: self.browser.focus_search())
         self.root.bind("<F5>", lambda _e: self.refresh())
         self.root.bind("<Control-q>", lambda _e: self.on_close())
+        self.root.bind("<Control-r>", lambda _e: self.on_sync())
 
     # -- state ------------------------------------------------------------
     def refresh(self) -> None:
@@ -300,6 +311,59 @@ class LibraryManagerApp:
         if self.controller.provenance_error:
             self.status.set(f"provenance.json problem: "
                             f"{self.controller.provenance_error}")
+        self.refresh_git()
+
+    def refresh_git(self) -> None:
+        """
+        Re-read the repository state into the strip and the window title.
+
+        Separate from `refresh()` so a sync action can update just this, and
+        because it is the only part of a refresh that shells out.
+        """
+        status = self.controller.git_status(refresh=True)
+        if not status.is_repo:
+            # Absent rather than an error message: using the library without
+            # git is perfectly normal.
+            self.git_strip.pack_forget()
+            self.root.title(self.base_title)
+            return
+        if not self.git_strip.winfo_ismapped():
+            after = self.banner if self.banner.winfo_ismapped() else self.toolbar
+            self.git_strip.pack(fill=tk.X, after=after)
+        self.git_strip.update_from(self.controller.git_summary_line(), status.state)
+        suffix = self.controller.git_title_suffix()
+        self.root.title(f"{self.base_title}  \u00b7  {suffix}" if suffix
+                        else self.base_title)
+
+    def on_sync(self) -> None:
+        """Open the sync view, and take whatever it did into account on close."""
+        if not self.controller.is_git_repo:
+            messagebox.showinfo(
+                "Not a git repository",
+                f"{self.controller.root} is not a git repository, so there is "
+                f"nothing to sync.\n\nRun 'git init' there, or clone the library "
+                f"from its remote, to use this.",
+                parent=self.root,
+            )
+            return
+        dialog = SyncDialog(
+            self.root, self.controller,
+            settings=self.settings,
+            on_changed=self._after_sync,
+        )
+        self.root.wait_window(dialog)
+        self.refresh()
+
+    def _after_sync(self) -> None:
+        """
+        Called from the sync view when a commit or a pull changed something.
+
+        A pull is the interesting case: the browser is showing the library as
+        it was before it, and what arrived may well be new parts.
+        """
+        self.browser.refresh()
+        self.status.set_counts(self.controller.counts_summary())
+        self.refresh_git()
 
     def on_row_selected(self, row: Optional[Row]) -> None:
         self.details.config(state=tk.NORMAL)

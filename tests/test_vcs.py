@@ -10,7 +10,6 @@ than hanging -- which is the actual thing being verified.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -20,85 +19,16 @@ from pathlib import Path
 import pytest
 
 from src.core import vcs
+from tests.conftest import commit_in, git, write_file as write
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None,
                                 reason="git is not installed")
 
-
-# --------------------------------------------------------------------------
-# Fixtures
-# --------------------------------------------------------------------------
-
-def git(root: Path, *args: str) -> str:
-    """Run git in `root` for test setup, loudly."""
-    env = dict(os.environ)
-    env.update({
-        "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
-        "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
-        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
-        "LC_ALL": "C",
-    })
-    proc = subprocess.run(["git", "-C", str(root), *args],
-                          capture_output=True, text=True, env=env)
-    assert proc.returncode == 0, f"git {' '.join(args)}\n{proc.stdout}{proc.stderr}"
-    return proc.stdout
-
-
-def write(root: Path, rel: str, content: str = "x\n") -> Path:
-    path = root / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return path
-
-
-@pytest.fixture
-def bare(tmp_path: Path) -> Path:
-    """A local stand-in for origin."""
-    remote = tmp_path / "remote.git"
-    remote.mkdir()
-    subprocess.run(["git", "init", "--bare", "--initial-branch=main", str(remote)],
-                   capture_output=True, check=True)
-    return remote
-
-
-@pytest.fixture
-def repo(tmp_path: Path, bare: Path) -> Path:
-    """A clone with one commit, tracking `main`, clean and in sync."""
-    root = tmp_path / "work"
-    root.mkdir()
-    git(root, "init", "--initial-branch=main")
-    git(root, "config", "user.name", "Test")
-    git(root, "config", "user.email", "test@example.com")
-    git(root, "config", "commit.gpgsign", "false")
-    git(root, "remote", "add", "origin", str(bare))
-    write(root, "README.md", "library\n")
-    git(root, "add", "-A")
-    git(root, "commit", "-m", "Initial commit")
-    git(root, "push", "-u", "origin", "main")
-    return root
-
-
-@pytest.fixture
-def second(tmp_path: Path, bare: Path, repo: Path) -> Path:
-    """
-    A second clone of the same remote -- the other machine.
-
-    This is what makes `behind` and `diverged` reachable without a network.
-    """
-    root = tmp_path / "other"
-    subprocess.run(["git", "clone", str(bare), str(root)],
-                   capture_output=True, check=True)
-    git(root, "config", "user.name", "Other")
-    git(root, "config", "user.email", "other@example.com")
-    git(root, "config", "commit.gpgsign", "false")
-    return root
-
-
-def commit_in(root: Path, rel: str, message: str) -> None:
-    write(root, rel, f"{message}\n")
-    git(root, "add", "-A")
-    git(root, "commit", "-m", message)
-
+# The repository fixtures live in conftest.py, because the Phase 4 GUI tests
+# need the same ones.
+repo = pytest.fixture(name="repo")(
+    lambda git_repo: git_repo
+)
 
 # --------------------------------------------------------------------------
 # Not a repository

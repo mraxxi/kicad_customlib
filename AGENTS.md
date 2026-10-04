@@ -153,6 +153,7 @@ gui/
   controller.py  view-model: every decision, no Tk -> tested headlessly
   widgets.py     category picker, plan preview, status bar, sortable tree
   browser.py     category list + item table
+  sync_dialog.py git state and the four safe actions, on a worker thread
   import_dialog.py, rename_dialog.py, app.py
 ```
 

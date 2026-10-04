@@ -24,6 +24,7 @@ from ..core import packager as packager_mod
 from ..core import provenance as pv
 from ..core import refactor as rf
 from ..core import table_gen as tg
+from ..core import vcs
 from .settings import DIR_IMPORT_SOURCE
 
 KIND_SYMBOL = "symbol"
@@ -93,11 +94,15 @@ class Controller:
         self.refs: lb.Refs = lb.Refs()
         self.prov: pv.Provenance = pv.Provenance(path=self.root / pv.FILENAME)
         self.provenance_error: str = ""
+        # Read lazily and cached: the strip asks for the status on every
+        # repaint, and shelling out to git each time would be absurd.
+        self._git_status: Optional[vcs.RepoStatus] = None
         self.refresh()
 
     # -- state ------------------------------------------------------------
     def refresh(self) -> None:
         """Re-scan the disk. Cheap enough to call after every change."""
+        self._git_status = None
         self.lib = lb.scan(self.root)
         self.refs = self.lib.resolve()
         try:
@@ -270,6 +275,114 @@ class Controller:
         if row.problem:
             lines.append(f"PROBLEM: {row.problem}")
         return "\n".join(lines)
+
+    # -- git ---------------------------------------------------------------
+    # A thin layer over core/vcs.py. Every rule about what git may and may
+    # not do lives there; this only decides what to show.
+
+    def git_status(self, *, refresh: bool = False) -> vcs.RepoStatus:
+        """
+        The cached repository status.
+
+        Cached because the strip and the window title both read it on every
+        repaint. `refresh=True` after anything that could have changed it --
+        an applied plan, a sync action, F5.
+        """
+        if refresh or self._git_status is None:
+            self._git_status = vcs.read_status(self.root)
+        return self._git_status
+
+    @property
+    def is_git_repo(self) -> bool:
+        return self.git_status().is_repo
+
+    def git_incoming(self) -> List[vcs.Commit]:
+        return vcs.incoming(self.root)
+
+    def git_outgoing(self) -> List[vcs.Commit]:
+        return vcs.outgoing(self.root)
+
+    def git_fetch(self) -> vcs.GitResult:
+        result = vcs.fetch(self.root)
+        self.git_status(refresh=True)
+        return result
+
+    def git_preview_commit(self, message: Optional[str] = None) -> vcs.CommitPreview:
+        preview = vcs.preview_commit(self.root, self.git_status(refresh=True), self.lib)
+        if message is not None:
+            preview.message = message
+        return preview
+
+    def git_commit(self, message: str) -> vcs.GitResult:
+        result = vcs.commit(self.root, message)
+        self.git_status(refresh=True)
+        return result
+
+    def git_pull(self) -> vcs.GitResult:
+        """
+        Fast-forward, then re-scan.
+
+        The re-scan is not housekeeping: what arrives from the other machine
+        can be a part whose tables were never regenerated, and the browser
+        would otherwise keep showing the library as it was before the pull.
+        """
+        result = vcs.pull_ff_only(self.root)
+        if result.ok:
+            self.refresh()
+        self.git_status(refresh=True)
+        return result
+
+    def git_push(self, *, skip_check: bool = False) -> vcs.GitResult:
+        """
+        Push, refusing by default if the audit finds errors.
+
+        `skip_check` is the deliberate override: this is one person's library
+        on two machines, so being unable to park a knowingly-broken state on
+        the remote would be worse than the risk of pushing one.
+        """
+        if not skip_check:
+            errors = self.audit_blocks_push()
+            if errors:
+                return vcs.GitResult(
+                    ("push",), 1, "",
+                    f"The audit found {len(errors)} error(s). Fix them, or push "
+                    f"anyway.",
+                )
+        result = vcs.push(self.root)
+        self.git_status(refresh=True)
+        return result
+
+    def audit_blocks_push(self, *, use_kicad_cli: bool = True) -> List[check_mod.Finding]:
+        """The errors -- and only the errors -- that should stop a push."""
+        return self.audit(use_kicad_cli=use_kicad_cli).errors
+
+    def git_summary_line(self) -> str:
+        """Text for the strip. Empty when there is no repository to describe."""
+        return self.git_status().summary_line()
+
+    def git_title_suffix(self) -> str:
+        """
+        The part of the window title that reflects git, or "".
+
+        Omitted when in sync or not a repository: a title that always carries
+        a git fragment stops being a signal.
+        """
+        status = self.git_status()
+        if not status.is_repo or status.state == vcs.IN_SYNC:
+            return ""
+        bits: List[str] = []
+        if status.ahead:
+            bits.append(f"\u2191{status.ahead}")
+        if status.behind:
+            bits.append(f"\u2193{status.behind}")
+        if status.dirty:
+            bits.append("modified")
+        if not bits:
+            bits.append(status.state_label)
+        return " ".join(bits)
+
+    def git_suggested_message(self) -> str:
+        return vcs.suggest_commit_message(self.root, self.git_status(), self.lib)
 
     # -- first-run dialog directories --------------------------------------
     def default_dir(self, purpose: str) -> Path:

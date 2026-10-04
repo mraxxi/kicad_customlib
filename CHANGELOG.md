@@ -5,6 +5,48 @@ tracked by git history, not here.
 
 ## [Unreleased]
 
+### GUI plan Phase 4 — Git in the interface
+- A always-visible strip under the toolbar:
+  `main · b6c9373 · ↑2 ↓0 · 3 changed · fetched 4 min ago   [Sync…]`. It is
+  absent, not erroring, when the library is not a git repository. Only the
+  states that need attention are emphasised — `diverged`, `unmerged`,
+  `detached`, an operation in progress — because `ahead` and `dirty` are the
+  normal condition of a two-machine library between sittings, and colouring
+  those would train the eye to ignore the colour.
+- New `gui/sync_dialog.py`: upstream, HEAD, incoming, outgoing, the working
+  tree, a commit message box and git's raw output, with Fetch, Pull, Commit,
+  Commit & Push and Push.
+- **Every disabled action states its reason**, taken verbatim from
+  `vcs.RepoStatus.blockers()`, in a label beside the button. That includes
+  while a job is running ("Waiting for the audit to finish…"), which is the
+  state the view actually opens in. A greyed button with a blank line next to
+  it is the thing this layout exists to prevent.
+- The pre-push audit runs in the background as soon as the view opens, because
+  learning that the library is broken at the moment you press Push is too late
+  to be useful. Errors disable Push until `Push anyway (N error(s))` is ticked;
+  the tick is never remembered between openings. The override exists because
+  this is one person's library on two machines — being unable to park a
+  knowingly-broken state on the remote would be worse than the risk.
+- A pull re-scans the library, refreshes the browser and re-runs the audit.
+  This is the two-machine failure the whole feature is for: a part arrives
+  from the other machine whose master tables were never regenerated, and
+  nothing else in the workflow would notice.
+- Every git call runs on a worker thread with the queue plus `after` polling
+  already used by the import dialog, and only one at a time: two concurrent
+  git commands on one repository contend for the index lock and the loser
+  fails with something no user should have to read.
+- A typed commit message is never overwritten by a refresh. The first
+  keystroke hands ownership to the user; "Use suggested message" hands it
+  back.
+- The window title carries the git state only when there is something to say —
+  `KiCad Custom Library Manager — KICAD_CUSTOM_LIB · ↑7 modified` — and
+  nothing at all when in sync, so that the fragment remains a signal.
+- `Ctrl+R` opens the sync view; the dialog's size is remembered per screen
+  configuration like every other window.
+- `Controller.git_status()` caches, with an explicit `refresh=True`: the strip
+  and the title both read it on every repaint, and shelling out to git each
+  time would be absurd. Any library rescan invalidates it.
+
 ### GUI plan Phase 3 — `core/vcs.py`, the git layer
 - New `core/vcs.py`: a toolkit-free git layer, so the CLI and the GUI share
   one set of rules and the whole of it is testable headlessly.

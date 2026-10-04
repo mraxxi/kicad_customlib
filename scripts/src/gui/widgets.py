@@ -371,3 +371,61 @@ class SortableTree(ttk.Treeview):
             self.yview_moveto(first_visible)
         except tk.TclError:
             pass
+
+
+class GitStrip(ttk.Frame):
+    """
+    One line of repository state, always visible, with a way into the detail.
+
+        main · b6c9373 · ↑2 ↓0 · 3 changed · fetched 4 min ago     [Sync…]
+
+    The text comes from the Controller, which gets it from `core.vcs`, so
+    this widget decides nothing except emphasis. It renders nothing at all
+    when the library is not a git repository -- absent rather than erroring,
+    because using the library without git is a perfectly normal thing to do.
+
+    The fetch age is part of the line on purpose: ahead/behind is counted
+    against the remote-tracking ref, so a count from a week ago is worse than
+    no count, and the user needs to be able to see which they are looking at.
+    """
+
+    # States that deserve the attention colour. "ahead" and "dirty" are not
+    # among them: on a two-machine library that is simply the normal state of
+    # affairs between sittings, and colouring it would train the eye to
+    # ignore the colour.
+    ALARMING = ("operation_in_progress", "unmerged", "detached", "diverged")
+
+    def __init__(self, parent: tk.Misc, *, on_open: Callable[[], None]):
+        super().__init__(parent, padding=(10, 4))
+        self._text = tk.StringVar(value="")
+        self._label = ttk.Label(self, textvariable=self._text, anchor=tk.W)
+        self._label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.button = ttk.Button(self, text="Sync…", command=on_open)
+        self.button.pack(side=tk.RIGHT)
+        self._state = ""
+
+    def update_from(self, summary: str, state: str) -> None:
+        """Show `summary`, emphasising it if `state` warrants attention."""
+        self._text.set(summary)
+        self._state = state
+        negative = theme.problem_foreground()
+        if state in self.ALARMING and negative:
+            self._label.config(foreground=negative, font=_bold_font())
+        else:
+            # "" rather than a palette colour, so the label goes back to
+            # whatever the theme says rather than to a guess.
+            self._label.config(foreground="", font="TkDefaultFont")
+
+    @property
+    def text(self) -> str:
+        return self._text.get()
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+
+def _bold_font() -> tkfont.Font:
+    f = tkfont.nametofont("TkDefaultFont").copy()
+    f.configure(weight="bold")
+    return f
