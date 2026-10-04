@@ -15,6 +15,7 @@ runs it.
   table_gen   sym-lib-table / fp-lib-table generation and staleness
   check       structured audit with severities
   packager    lean per-project export
+  vcs         git state and the four safe operations (status/fetch/pull/push)
 """
 
 from . import (
@@ -28,6 +29,7 @@ from . import (
     refactor,
     s_expr,
     table_gen,
+    vcs,
 )
 from .library import Library, scan
 from .ops import ConflictPolicy, Plan, apply
@@ -37,7 +39,7 @@ from .table_gen import generate_tables, scan_libraries
 __all__ = [
     # modules
     "check", "ingest", "library", "naming", "ops", "packager", "provenance",
-    "refactor", "s_expr", "table_gen",
+    "refactor", "s_expr", "table_gen", "vcs",
     # common entry points
     "Library", "scan", "Plan", "apply", "ConflictPolicy",
     "generate_tables", "scan_libraries", "ProjectPackager",

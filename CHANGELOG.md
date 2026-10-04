@@ -5,6 +5,62 @@ tracked by git history, not here.
 
 ## [Unreleased]
 
+### GUI plan Phase 3 — `core/vcs.py`, the git layer
+- New `core/vcs.py`: a toolkit-free git layer, so the CLI and the GUI share
+  one set of rules and the whole of it is testable headlessly.
+- **It can only do four things, and none of them can lose work.** The module
+  issues `status`, `rev-parse`, `symbolic-ref`, `log`, `rev-list`, `remote`,
+  `config`, `add`, `commit`, `fetch`, `pull --ff-only` and `push`. There is no
+  force push, reset, checkout, stash, rebase, explicit merge, clean or gc
+  anywhere in it, because on a library synced between two machines the work
+  those would discard exists in no other clone. A test reads the subcommands
+  straight off the source and fails on anything outside the allowlist.
+- `RepoStatus.state` reduces everything to one word, in a fixed precedence:
+  `not_a_repo` → `operation_in_progress` → `unmerged` → `detached` →
+  `no_upstream` → `diverged` → `behind` → `ahead` → `dirty` → `in_sync`.
+  Several of those are true at once in practice, so the order is asserted
+  directly rather than inferred from a repository that happens to be in one
+  of them.
+- `blockers()` returns action → reason, and the reasons are whole sentences
+  because the interface shows them verbatim. A greyed-out button that does not
+  say why is the thing this avoids. A dirty tree blocks a pull deliberately:
+  git's own message talks about overwriting local changes, which does not tell
+  you what to do, whereas "commit them first" does.
+- Hardening: `GIT_TERMINAL_PROMPT=0`, empty `GIT_ASKPASS`/`SSH_ASKPASS`,
+  `ssh -oBatchMode=yes` and no `DISPLAY`, so a remote needing a password
+  cannot turn a call into a hang waiting on a terminal the GUI does not have;
+  `GIT_OPTIONAL_LOCKS=0` so reading status never takes the index lock out from
+  under a terminal; `LC_ALL=C` for stable parsing. Local reads time out at
+  10 s and transfers at 120 s, and a timeout comes back as a result, never an
+  exception.
+- Status is parsed from `--porcelain=v1 -z`. The default format quotes and
+  escapes any path with a space or a non-ASCII byte, and this library has
+  plenty of both; `-z` gives the literal path, at the cost of a rename
+  emitting two fields for one entry.
+- `fetch`'s age is part of the indicator, not decoration: ahead/behind is
+  computed against the remote-tracking ref, so "in sync" after a week without
+  a fetch means nothing. The status line says `never fetched` when it is
+  unknown.
+- `suggest_commit_message()` reads the diff and says what changed — `Add 3
+  symbols to Conn_XT`, `Regenerate master library tables`, `Remove 1
+  footprint from C` — with a bulleted body for a mixed change. On a repository
+  synced between machines the history is the only record of when a part
+  arrived, and "Update files" destroys that. Always editable.
+- `CommitPreview` rather than an `ops.Plan`. A Plan exists because KiCad
+  S-expressions are fragile and interlinked; a commit is one invocation over a
+  list of paths, and dressing it up as a Plan would only obscure that. The
+  commit stages exactly the paths the preview listed, so nothing created while
+  a dialog sat open can slip in.
+- New CLI: `sync status [--json]`, `sync fetch`, `sync pull`, `sync commit
+  [-m]`, `sync push [--skip-check]`, following the existing confirm/`--yes`/
+  `--dry-run` conventions. `pull` re-runs the audit on what arrived, which is
+  the main two-machine failure this is meant to catch; `push` audits first and
+  `--skip-check` overrides it, because a one-person library needs to be able
+  to park a knowingly-broken state on the remote.
+- `tests/test_vcs.py` (93 tests) drives a temp repo plus a `git init --bare`
+  remote and a second clone, so every state — including behind, diverged and a
+  real conflicted merge — is reachable with no network and no display.
+
 ### GUI plan Phase 2 — File dialogs and appearance
 - New `gui/filepicker.py`. On Linux `tkinter.filedialog` is not native — Tk
   draws its own Motif-era widget — so the picker now prefers `kdialog` (the

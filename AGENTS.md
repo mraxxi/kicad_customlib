@@ -148,6 +148,7 @@ core/
   table_gen.py   table generation and staleness
   check.py       structured audit with severities
   packager.py    lean per-project export
+  vcs.py         git state and the four safe operations; no force push, no reset
 gui/
   controller.py  view-model: every decision, no Tk -> tested headlessly
   widgets.py     category picker, plan preview, status bar, sortable tree
@@ -194,6 +195,14 @@ python scripts/lib_manager.py package ~/projects/amp
 
 # One-time: manifest.json -> provenance.json
 python scripts/lib_manager.py migrate-manifest
+
+# Git, for the two-machine setup. Only safe operations: there is no force
+# push, reset, stash, rebase or checkout anywhere in core/vcs.py.
+python scripts/lib_manager.py sync status      # --json for machine output
+python scripts/lib_manager.py sync fetch
+python scripts/lib_manager.py sync pull        # --ff-only, then re-audits
+python scripts/lib_manager.py sync commit      # message generated from the diff
+python scripts/lib_manager.py sync push        # audits first; --skip-check overrides
 
 python scripts/lib_manager.py gui              # or no arguments
 ```

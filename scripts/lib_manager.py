@@ -32,6 +32,7 @@ from src.core import packager as packager_mod      # noqa: E402
 from src.core import provenance as pv              # noqa: E402
 from src.core import refactor as rf                # noqa: E402
 from src.core import table_gen as tg               # noqa: E402
+from src.core import vcs                           # noqa: E402
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -406,6 +407,200 @@ def cmd_prune_provenance(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# --------------------------------------------------------------------------
+# Sync (git)
+# --------------------------------------------------------------------------
+
+def _print_status(status: vcs.RepoStatus) -> None:
+    _out(f"State:     {status.state}  ({status.state_label})")
+    if status.branch:
+        _out(f"Branch:    {status.branch}")
+    elif status.detached:
+        _out("Branch:    (detached HEAD)")
+    if status.head:
+        _out(f"HEAD:      {status.head.short}  {status.head.subject}")
+        _out(f"           {status.head.author}, {status.head.date_relative}")
+    if status.upstream:
+        _out(f"Upstream:  {status.upstream}  (ahead {status.ahead}, behind {status.behind})")
+    else:
+        _out("Upstream:  none")
+    if status.remote_url:
+        _out(f"Remote:    {status.remote_name} -> {status.remote_url}")
+    _out(f"Fetched:   {vcs.describe_fetch_age(status.last_fetch)}")
+
+    groups = (
+        ("staged", status.staged), ("modified", status.modified),
+        ("deleted", status.deleted), ("untracked", status.untracked),
+        ("unmerged", status.unmerged),
+    )
+    if status.dirty:
+        _out("")
+        for label, paths in groups:
+            for path in paths:
+                _out(f"  {label:<10} {path}")
+    else:
+        _out("Tree:      clean")
+
+    blockers = status.blockers()
+    if blockers:
+        _out("")
+        _out("Unavailable:")
+        for action in (vcs.FETCH, vcs.PULL, vcs.COMMIT, vcs.PUSH):
+            if action in blockers:
+                _out(f"  {action:<7} {blockers[action]}")
+
+
+def cmd_sync_status(args: argparse.Namespace) -> int:
+    status = vcs.read_status(ROOT_DIR)
+    if args.json:
+        _out(json.dumps({
+            "state": status.state,
+            "state_label": status.state_label,
+            "is_repo": status.is_repo,
+            "branch": status.branch,
+            "detached": status.detached,
+            "head": status.head.short if status.head else None,
+            "head_subject": status.head.subject if status.head else None,
+            "upstream": status.upstream,
+            "remote_name": status.remote_name,
+            "remote_url": status.remote_url,
+            "ahead": status.ahead,
+            "behind": status.behind,
+            "dirty": status.dirty,
+            "staged": status.staged,
+            "modified": status.modified,
+            "deleted": status.deleted,
+            "untracked": status.untracked,
+            "unmerged": status.unmerged,
+            "operation": status.operation,
+            "last_fetch": status.last_fetch.isoformat() if status.last_fetch else None,
+            "blockers": status.blockers(),
+        }, indent=2))
+        return EXIT_OK
+
+    if not status.is_repo:
+        _out("Not a git repository.")
+        if status.error:
+            _err(status.error)
+        return EXIT_OK
+
+    _print_status(status)
+    _out("")
+    incoming = vcs.incoming(ROOT_DIR)
+    outgoing = vcs.outgoing(ROOT_DIR)
+    if incoming:
+        _out(f"Incoming ({len(incoming)}) -- a pull would bring:")
+        for commit in incoming:
+            _out(f"  {commit.describe()}")
+    if outgoing:
+        _out(f"Outgoing ({len(outgoing)}) -- a push would send:")
+        for commit in outgoing:
+            _out(f"  {commit.describe()}")
+    return EXIT_OK
+
+
+def _report(result: vcs.GitResult) -> int:
+    _out(result.transcript())
+    return EXIT_OK if result.ok else EXIT_ERROR
+
+
+def cmd_sync_fetch(args: argparse.Namespace) -> int:
+    return _report(vcs.fetch(ROOT_DIR))
+
+
+def cmd_sync_pull(args: argparse.Namespace) -> int:
+    """
+    Fast-forward only, then re-audit.
+
+    The audit afterwards is the point of the whole feature: what arrives from
+    the other machine can perfectly well be a part whose tables were never
+    regenerated, and that is invisible until KiCad fails to load it.
+    """
+    result = vcs.pull_ff_only(ROOT_DIR)
+    code = _report(result)
+    if not result.ok:
+        return code
+    _out("")
+    report = check_mod.run(ROOT_DIR, use_kicad_cli=not getattr(args, "no_kicad_cli", False))
+    _out(report.summary())
+    if report.has_errors:
+        _err("the pull arrived with errors; see above")
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+def cmd_sync_commit(args: argparse.Namespace) -> int:
+    status = vcs.read_status(ROOT_DIR)
+    preview = vcs.preview_commit(ROOT_DIR, status)
+    _out(preview.summary())
+    if preview.is_empty:
+        return EXIT_OK
+
+    blocked = status.blockers().get(vcs.COMMIT)
+    if blocked:
+        _err(f"cannot commit: {blocked}")
+        return EXIT_ERROR
+
+    message = args.message or preview.message
+    if not message.strip():
+        raise UsageError("nothing to describe; pass -m MESSAGE")
+    if args.message:
+        _out("")
+        _out("Message (from -m):")
+        for line in message.splitlines():
+            _out(f"  {line}")
+
+    if args.dry_run:
+        _out("\n(dry run: nothing was committed)")
+        return EXIT_OK
+    if not _confirm("\nCommit this?", args.yes):
+        _out("Aborted.")
+        return EXIT_ABORTED
+    return _report(vcs.commit(ROOT_DIR, message))
+
+
+def cmd_sync_push(args: argparse.Namespace) -> int:
+    """
+    Push, after auditing.
+
+    The audit runs first because a push is the moment a mistake stops being
+    local. `--skip-check` exists because this is a one-person library across
+    two machines: there is no one else to protect from a knowingly-broken
+    intermediate state, and being unable to park work on the remote would be
+    worse than the risk.
+    """
+    status = vcs.read_status(ROOT_DIR)
+    blocked = status.blockers().get(vcs.PUSH)
+    if blocked:
+        _err(f"cannot push: {blocked}")
+        return EXIT_ERROR
+
+    outgoing = vcs.outgoing(ROOT_DIR)
+    _out(f"Push {len(outgoing)} commit(s) to {status.upstream}:")
+    for commit in outgoing:
+        _out(f"  {commit.describe()}")
+    _out("")
+
+    if args.skip_check:
+        _out("(skipping the pre-push audit: --skip-check)")
+    else:
+        report = check_mod.run(ROOT_DIR, use_kicad_cli=not args.no_kicad_cli)
+        _out(report.summary())
+        if report.has_errors:
+            _err(f"\nrefusing to push with {len(report.errors)} error(s); "
+                 f"fix them, or re-run with --skip-check")
+            return EXIT_ERROR
+        _out("")
+
+    if args.dry_run:
+        _out("(dry run: nothing was pushed)")
+        return EXIT_OK
+    if not _confirm("Push?", args.yes):
+        _out("Aborted.")
+        return EXIT_ABORTED
+    return _report(vcs.push(ROOT_DIR))
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     """Show what the library actually contains, straight from the disk."""
     lib = lb.scan(ROOT_DIR)
@@ -482,6 +677,9 @@ Examples:
   lib_manager.py package ~/projects/amp --out ~/projects/amp/project_libs
   lib_manager.py migrate-manifest
   lib_manager.py prune-provenance --dry-run
+  lib_manager.py sync status
+  lib_manager.py sync commit -m "Add XT60 footprint" --yes
+  lib_manager.py sync push
 
 Every mutating command prints its plan first. Add --dry-run to stop there, or
 --yes to skip the confirmation.
@@ -578,6 +776,47 @@ Every mutating command prints its plan first. Add --dry-run to stop there, or
         help="discard stale entries instead of re-homing the recoverable ones")
     add_mutating(p_prune)
     p_prune.set_defaults(func=cmd_prune_provenance)
+
+    p_git = subparsers.add_parser(
+        "sync", help="git status and the four safe operations")
+    git_subs = p_git.add_subparsers(dest="sync_command")
+
+    g_status = git_subs.add_parser("status", help="branch, upstream, ahead/behind, working tree")
+    g_status.add_argument("--json", action="store_true", help="machine-readable output")
+    g_status.set_defaults(func=cmd_sync_status)
+
+    g_fetch = git_subs.add_parser("fetch", help="update the remote-tracking refs")
+    g_fetch.set_defaults(func=cmd_sync_fetch)
+
+    g_pull = git_subs.add_parser(
+        "pull", help="fast-forward to upstream, then audit what arrived")
+    g_pull.add_argument("--no-kicad-cli", action="store_true",
+                        help="skip the KiCad parse checks in the follow-up audit")
+    g_pull.set_defaults(func=cmd_sync_pull)
+
+    g_commit = git_subs.add_parser(
+        "commit", help="commit the library changes (message generated if omitted)")
+    g_commit.add_argument("--message", "-m", default=None,
+                          help="commit message (default: generated from the changes)")
+    g_commit.add_argument("--dry-run", "-n", action="store_true",
+                          help="show what would be committed and stop")
+    g_commit.add_argument("--yes", "-y", action="store_true",
+                          help="do not ask for confirmation")
+    g_commit.set_defaults(func=cmd_sync_commit)
+
+    g_push = git_subs.add_parser("push", help="audit, then push the outgoing commits")
+    g_push.add_argument("--skip-check", action="store_true",
+                        help="push even though the audit reports errors")
+    g_push.add_argument("--no-kicad-cli", action="store_true",
+                        help="skip the KiCad parse checks in the pre-push audit")
+    g_push.add_argument("--dry-run", "-n", action="store_true",
+                        help="show what would be pushed and stop")
+    g_push.add_argument("--yes", "-y", action="store_true",
+                        help="do not ask for confirmation")
+    g_push.set_defaults(func=cmd_sync_push)
+
+    # "sync" on its own shows the status, which is the useful default.
+    p_git.set_defaults(func=cmd_sync_status, json=False)
 
     p_gui = subparsers.add_parser("gui", help="launch the desktop interface")
     p_gui.set_defaults(func=cmd_gui)
