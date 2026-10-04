@@ -107,9 +107,12 @@ def _run_plan(
     if not result.ok:
         return EXIT_ERROR
 
+    # Deferred provenance edits run only now, after the operations succeeded.
     if prov is not None:
-        prov.save()
-        _out(f"updated {prov.path.name}")
+        changed = pv.apply_edits(prov, plan.provenance)
+        if changed or prov.items or prov.existed:
+            prov.save()
+            _out(f"updated {prov.path.name}")
 
     if regenerate:
         follow_up = tg.plan_generate(ROOT_DIR)
@@ -175,7 +178,6 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         ROOT_DIR, Path(args.source), args.category,
         select=select,
         conflict=ops.ConflictPolicy(args.conflict),
-        prov=prov,
     ) as preview:
         _out(f"Detected {len(preview.candidates)} candidate(s) in {args.source}:")
         for candidate in preview.candidates:
@@ -224,7 +226,6 @@ def cmd_sync_staging(args: argparse.Namespace) -> int:
             with ingest_mod.prepare(
                 ROOT_DIR, item, category,
                 conflict=ops.ConflictPolicy(args.conflict),
-                prov=prov,
             ) as preview:
                 _out(preview.plan.summary())
                 if preview.plan.is_empty:
@@ -282,12 +283,12 @@ def cmd_rename(args: argparse.Namespace) -> int:
     if kind == rf.KIND_CATEGORY:
         plan = rf.plan_rename_category(
             ROOT_DIR, args.old, args.new,
-            conflict=ops.ConflictPolicy(args.conflict), prov=prov,
+            conflict=ops.ConflictPolicy(args.conflict),
         )
     else:
         category, old = _split_lib_id(args.old, args.category, kind)
         new = args.new.split(":", 1)[-1]
-        common = dict(conflict=ops.ConflictPolicy(args.conflict), prov=prov)
+        common = dict(conflict=ops.ConflictPolicy(args.conflict))
         if kind == rf.KIND_SYMBOL:
             plan = rf.plan_rename_symbol(ROOT_DIR, category, old, new, **common)
         elif kind == rf.KIND_FOOTPRINT:
@@ -306,7 +307,7 @@ def cmd_move(args: argparse.Namespace) -> int:
     category, name = _split_lib_id(args.name, args.category, args.kind)
     plan = rf.plan_move(
         ROOT_DIR, args.kind, category, name, args.to,
-        conflict=ops.ConflictPolicy(args.conflict), prov=prov,
+        conflict=ops.ConflictPolicy(args.conflict),
     )
     return _run_plan(plan, args, prov=prov)
 

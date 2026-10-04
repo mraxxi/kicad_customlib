@@ -18,6 +18,9 @@ Two naming decisions matter:
   footprint's own (model ...) path.
 * A multi-symbol .kicad_sym is split into one file per symbol, because every
   one of the 22784 official symbol files holds exactly one (AGENTS.md 6.1).
+
+Planning records provenance intent on the plan rather than writing it, so
+previewing an import and then cancelling leaves provenance untouched.
 """
 
 from __future__ import annotations
@@ -374,7 +377,6 @@ def plan_ingest(
     pairing: Optional[Pairing] = None,
     conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
     bundle: Optional[Bundle] = None,
-    prov: Optional[pv.Provenance] = None,
     lib: Optional[lb.Library] = None,
 ) -> ops.Plan:
     """
@@ -441,10 +443,10 @@ def plan_ingest(
         if model.source_file.name != target.name:
             note += f"; was {model.source_file.name}"
         plan.copy(model.source_file, target, note=note)
-        if prov is not None:
-            prov.record(category, pv.KIND_MODEL, target.name,
-                        original_name=model.source_file.name,
-                        source=_source_label(bundle))
+        plan.record_provenance(
+            category, pv.KIND_MODEL, target.name,
+            original_name=model.source_file.name, source=_source_label(bundle),
+        )
 
     # --- footprints --------------------------------------------------------
     footprint_final: Dict[str, str] = {}
@@ -475,9 +477,10 @@ def plan_ingest(
             continue
         footprint_final[fp.key] = target.stem
         plan.write(target, text, note=f"footprint '{target.stem}'")
-        if prov is not None:
-            prov.record(category, pv.KIND_FOOTPRINT, target.stem,
-                        original_name=fp.source_file.name, source=_source_label(bundle))
+        plan.record_provenance(
+            category, pv.KIND_FOOTPRINT, target.stem,
+            original_name=fp.source_file.name, source=_source_label(bundle),
+        )
 
     # --- symbols -----------------------------------------------------------
     for sym in (c for c in selected if c.kind == KIND_SYMBOL):
@@ -507,9 +510,10 @@ def plan_ingest(
         if sym.symbol_of:
             note += f" split from {sym.source_file.name}"
         plan.write(target, text, note=note)
-        if prov is not None:
-            prov.record(category, pv.KIND_SYMBOL, target.stem,
-                        original_name=sym.source_file.name, source=_source_label(bundle))
+        plan.record_provenance(
+            category, pv.KIND_SYMBOL, target.stem,
+            original_name=sym.source_file.name, source=_source_label(bundle),
+        )
 
     return plan
 
@@ -547,7 +551,6 @@ def prepare(
     *,
     select: Optional[Iterable[str]] = None,
     conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
-    prov: Optional[pv.Provenance] = None,
 ) -> IngestPreview:
     """
     Detect, pair and plan in one call.
@@ -566,7 +569,7 @@ def prepare(
         pairing = autopair([c for c in candidates if c.include])
         plan = plan_ingest(
             root, category, candidates,
-            pairing=pairing, conflict=conflict, bundle=bundle, prov=prov,
+            pairing=pairing, conflict=conflict, bundle=bundle,
         )
     except BaseException:
         bundle.close()

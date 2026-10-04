@@ -100,7 +100,8 @@ def test_renaming_to_the_same_name_is_a_no_op(populated_lib):
 def test_rename_symbol_updates_provenance(populated_lib):
     prov = pv.load(populated_lib)
     prov.record("Amp_Test", pv.KIND_SYMBOL, "TPA3255DDV", source="SnapEDA")
-    rf.plan_rename_symbol(populated_lib, "Amp_Test", "TPA3255DDV", "NEW", prov=prov)
+    plan = rf.plan_rename_symbol(populated_lib, "Amp_Test", "TPA3255DDV", "NEW")
+    pv.apply_edits(prov, plan.provenance)
     assert prov.get("Amp_Test", pv.KIND_SYMBOL, "TPA3255DDV") is None
     assert prov.get("Amp_Test", pv.KIND_SYMBOL, "NEW").source == "SnapEDA"
 
@@ -269,7 +270,10 @@ def test_move_rejects_an_unknown_kind(populated_lib):
 def test_move_updates_provenance_category(populated_lib):
     prov = pv.load(populated_lib)
     prov.record("Conn_Test", pv.KIND_SYMBOL, "KF2EDG", source="vendor")
-    rf.plan_move(populated_lib, rf.KIND_SYMBOL, "Conn_Test", "KF2EDG", "Conn_New", prov=prov)
+    plan = rf.plan_move(
+        populated_lib, rf.KIND_SYMBOL, "Conn_Test", "KF2EDG", "Conn_New"
+    )
+    pv.apply_edits(prov, plan.provenance)
     assert prov.get("Conn_New", pv.KIND_SYMBOL, "KF2EDG").source == "vendor"
 
 
@@ -341,7 +345,8 @@ def test_rename_category_updates_provenance_keys(populated_lib):
     prov = pv.load(populated_lib)
     prov.record("Amp_Test", pv.KIND_SYMBOL, "TPA3255DDV")
     prov.record("Amp_Test", pv.KIND_FOOTPRINT, "SOP63P810X120-44N")
-    rf.plan_rename_category(populated_lib, "Amp_Test", "TI_Amps", prov=prov)
+    plan = rf.plan_rename_category(populated_lib, "Amp_Test", "TI_Amps")
+    pv.apply_edits(prov, plan.provenance)
     assert prov.keys_for_category("Amp_Test") == []
     assert len(prov.keys_for_category("TI_Amps")) == 2
 

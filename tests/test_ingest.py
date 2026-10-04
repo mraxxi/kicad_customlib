@@ -20,8 +20,12 @@ CAT = "Amp_Test"
 def _run(lib_root: Path, source: Path, category: str = CAT, **kw):
     """prepare + apply, returning (preview-ish record, result)."""
     prov = kw.pop("prov", None)
-    with ingest.prepare(lib_root, source, category, prov=prov, **kw) as prev:
+    with ingest.prepare(lib_root, source, category, **kw) as prev:
         result = ops.apply(prev.plan)
+        # Provenance edits are recorded on the plan and applied by the caller
+        # only after the operations succeed.
+        if prov is not None and result.ok:
+            pv.apply_edits(prov, prev.plan.provenance)
         return prev.candidates, prev.plan, result
 
 

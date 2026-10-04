@@ -76,6 +76,31 @@ class Operation:
         return f"{out}  # {self.note}" if self.note else out
 
 
+@dataclass(frozen=True)
+class ProvenanceEdit:
+    """
+    A provenance change to make *after* a plan is applied.
+
+    Provenance updates used to happen while the plan was being built, which
+    broke the rule that building a plan touches nothing. The GUI rebuilds the
+    plan on every keystroke to keep its live preview current, so a rename
+    typed character by character walked the provenance key through every
+    partial name and stranded it on the first one -- losing the original
+    vendor filename and import date.
+
+    Recording the intent here instead means the edit happens exactly once,
+    only when the operations actually ran.
+    """
+    action: str                 # record | rename | forget | rename_category
+    category: str = ""
+    kind: str = ""
+    name: str = ""
+    new_name: str = ""
+    new_category: str = ""
+    original_name: str = ""
+    source: str = ""
+
+
 @dataclass
 class Conflict:
     """A target that already exists, and what the policy decided to do."""
@@ -94,6 +119,7 @@ class Plan:
     warnings: List[str] = field(default_factory=list)
     conflicts: List[Conflict] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    provenance: List[ProvenanceEdit] = field(default_factory=list)
 
     # -- construction -----------------------------------------------------
     def add(self, op: Operation) -> Operation:
@@ -118,6 +144,35 @@ class Plan:
     def delete_dir_if_empty(self, target: Path, note: str = "") -> Operation:
         return self.add(Operation(OpKind.DELETE_DIR_IF_EMPTY, Path(target), note=note))
 
+    # -- deferred provenance edits ----------------------------------------
+    def record_provenance(
+        self, category: str, kind: str, name: str,
+        *, original_name: str = "", source: str = "",
+    ) -> None:
+        self.provenance.append(ProvenanceEdit(
+            "record", category=category, kind=kind, name=name,
+            original_name=original_name, source=source,
+        ))
+
+    def rename_provenance(
+        self, category: str, kind: str, old: str, new: str,
+        *, new_category: str = "",
+    ) -> None:
+        self.provenance.append(ProvenanceEdit(
+            "rename", category=category, kind=kind, name=old,
+            new_name=new, new_category=new_category,
+        ))
+
+    def forget_provenance(self, category: str, kind: str, name: str) -> None:
+        self.provenance.append(ProvenanceEdit(
+            "forget", category=category, kind=kind, name=name,
+        ))
+
+    def rename_provenance_category(self, old: str, new: str) -> None:
+        self.provenance.append(ProvenanceEdit(
+            "rename_category", name=old, new_name=new,
+        ))
+
     def warn(self, message: str) -> None:
         if message not in self.warnings:
             self.warnings.append(message)
@@ -132,6 +187,7 @@ class Plan:
             self.warn(w)
         self.conflicts.extend(other.conflicts)
         self.notes.extend(other.notes)
+        self.provenance.extend(other.provenance)
 
     # -- inspection -------------------------------------------------------
     @property

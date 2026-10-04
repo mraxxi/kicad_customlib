@@ -214,6 +214,78 @@ def load(root: Path, *, filename: str = FILENAME) -> Provenance:
 
 
 # --------------------------------------------------------------------------
+# Deferred edits
+# --------------------------------------------------------------------------
+
+def apply_edits(prov: Provenance, edits: Sequence["object"]) -> int:
+    """
+    Run the provenance edits a plan recorded, after its operations succeeded.
+
+    Callers must invoke this only once, and only on success. Building a plan
+    deliberately does not touch provenance -- see ops.ProvenanceEdit for why.
+    Returns the number of edits that changed something.
+    """
+    applied = 0
+    for edit in edits:
+        action = getattr(edit, "action", None)
+        if action == "record":
+            prov.record(
+                edit.category, edit.kind, edit.name,
+                original_name=edit.original_name, source=edit.source,
+            )
+            applied += 1
+        elif action == "rename":
+            if prov.rename(
+                edit.category, edit.kind, edit.name, edit.new_name,
+                new_category=edit.new_category or None,
+            ):
+                applied += 1
+        elif action == "forget":
+            if prov.forget(edit.category, edit.kind, edit.name):
+                applied += 1
+        elif action == "rename_category":
+            applied += prov.rename_category(edit.name, edit.new_name)
+        else:
+            raise ValueError(f"unknown provenance edit action {action!r}")
+    return applied
+
+
+# --------------------------------------------------------------------------
+# Pruning
+# --------------------------------------------------------------------------
+
+def stale_keys(prov: Provenance, lib) -> List[str]:
+    """
+    Keys whose item is not on disk.
+
+    These are harmless but they accumulate: nothing has ever removed them, so
+    a library that has been reorganised collects an entry per abandoned name.
+    `lib` is a library.Library; typed loosely to keep this module free of a
+    scanner import.
+    """
+    out: List[str] = []
+    for key in sorted(prov.items):
+        category, kind, name = split_key(key)
+        if kind == KIND_SYMBOL:
+            found = lib.find_symbol(category, name)
+        elif kind == KIND_FOOTPRINT:
+            found = lib.find_footprint(category, name)
+        else:
+            found = lib.find_model(category, name)
+        if found is None:
+            out.append(key)
+    return out
+
+
+def prune(prov: Provenance, lib) -> List[str]:
+    """Drop every stale entry. Returns the keys removed."""
+    removed = stale_keys(prov, lib)
+    for key in removed:
+        prov.items.pop(key, None)
+    return removed
+
+
+# --------------------------------------------------------------------------
 # One-time migration from manifest.json
 # --------------------------------------------------------------------------
 

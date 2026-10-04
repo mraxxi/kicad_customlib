@@ -390,22 +390,18 @@ def run(
             remedy="fix or delete the file, or restore it from git",
         )
     else:
-        for key in sorted(prov.items):
+        for key in pv.stale_keys(prov, lib):
             cat, kind, name = pv.split_key(key)
-            found = (
-                lib.find_symbol(cat, name) if kind == pv.KIND_SYMBOL
-                else lib.find_footprint(cat, name) if kind == pv.KIND_FOOTPRINT
-                else lib.find_model(cat, name)
+            report.add(
+                WARNING, "provenance-stale",
+                f"provenance records {kind} '{name}' in '{cat}', but nothing "
+                f"on disk matches",
+                where=key,
+                # Nothing removes these automatically -- save() writes items
+                # verbatim -- so point at the command that does.
+                remedy="the item was deleted or renamed outside the tool; run "
+                       "'python scripts/lib_manager.py prune-provenance' to drop it",
             )
-            if found is None:
-                report.add(
-                    WARNING, "provenance-stale",
-                    f"provenance records {kind} '{name}' in '{cat}', but nothing "
-                    f"on disk matches",
-                    where=key,
-                    remedy="the item was deleted or renamed outside the tool; the "
-                           "entry is harmless and will be dropped on the next write",
-                )
 
     # --- KiCad parse checks ----------------------------------------------
     cli = shutil.which("kicad-cli") if use_kicad_cli else None

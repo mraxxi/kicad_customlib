@@ -290,9 +290,7 @@ class Controller:
         *,
         conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
     ) -> ingest_mod.IngestPreview:
-        return ingest_mod.prepare(
-            self.root, source, category, conflict=conflict, prov=self.prov
-        )
+        return ingest_mod.prepare(self.root, source, category, conflict=conflict)
 
     def plan_rename(
         self,
@@ -304,7 +302,7 @@ class Controller:
         rename_model: bool = False,
         conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
     ) -> ops.Plan:
-        common = dict(conflict=conflict, prov=self.prov, lib=self.lib)
+        common = dict(conflict=conflict, lib=self.lib)
         if kind == rf.KIND_CATEGORY:
             return rf.plan_rename_category(self.root, old, new, **common)
         if kind == KIND_SYMBOL:
@@ -328,7 +326,7 @@ class Controller:
     ) -> ops.Plan:
         return rf.plan_move(
             self.root, kind, category, name, new_category,
-            conflict=conflict, prov=self.prov, lib=self.lib,
+            conflict=conflict, lib=self.lib,
         )
 
     def plan_delete(self, rows: Sequence[Row]) -> ops.Plan:
@@ -393,14 +391,19 @@ class Controller:
     ) -> ops.Result:
         """
         Apply a plan, then put the library back in a consistent state:
-        provenance saved, tables regenerated, index re-scanned.
+        deferred provenance edits run, provenance saved, tables regenerated,
+        index re-scanned.
         """
         result = ops.apply(plan, on_progress=on_progress)
         if not result.ok:
             self.refresh()
             return result
 
-        if self.prov.items or self.prov.existed:
+        # Provenance is edited here, once, and only now that the operations
+        # have actually run. Doing it while the plan was built meant the GUI's
+        # per-keystroke preview rewrote the keys on every character typed.
+        changed = pv.apply_edits(self.prov, plan.provenance)
+        if changed or self.prov.items or self.prov.existed:
             self.prov.save()
 
         self.refresh()

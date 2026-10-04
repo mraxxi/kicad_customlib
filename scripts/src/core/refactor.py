@@ -15,6 +15,11 @@ sibling that extends it.
 Renaming anything breaks projects that already reference the old name. That
 is unavoidable and always warned about; KiCad's "Edit Symbol Library
 References" dialog is the fix on the project side.
+
+Nothing here touches provenance. Provenance changes are recorded on the plan
+as ops.ProvenanceEdit and applied by the caller only after the operations
+succeed -- these functions are called repeatedly to refresh a live preview, so
+mutating anything from them is a bug.
 """
 
 from __future__ import annotations
@@ -211,7 +216,6 @@ def plan_rename_symbol(
     new: str,
     *,
     conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
-    prov: Optional[pv.Provenance] = None,
     lib: Optional[lb.Library] = None,
 ) -> ops.Plan:
     """Rename a symbol: its file, its internal names, and sibling extends."""
@@ -251,8 +255,7 @@ def plan_rename_symbol(
         )
 
     ws.emit(plan)
-    if prov is not None:
-        prov.rename(category, KIND_SYMBOL, old, final_name)
+    plan.rename_provenance(category, KIND_SYMBOL, old, final_name)
     plan.warn(_break_warning("symbol", f"{category}:{old}", f"{category}:{final_name}"))
     return plan
 
@@ -269,7 +272,6 @@ def plan_rename_footprint(
     *,
     rename_model: bool = False,
     conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
-    prov: Optional[pv.Provenance] = None,
     lib: Optional[lb.Library] = None,
 ) -> ops.Plan:
     """
@@ -321,8 +323,9 @@ def plan_rename_footprint(
                 fp.path, sx.set_model_path(ws.text(fp.path), index, new_uri),
                 note=f"model path -> {new_model.name}",
             )
-            if prov is not None:
-                prov.rename(category, KIND_MODEL, info.resolved.name, new_model.name)
+            plan.rename_provenance(
+                category, KIND_MODEL, info.resolved.name, new_model.name
+            )
 
     users = _retarget_footprint_refs(ws, lib, f"{category}:{old}", f"{category}:{final_name}")
     if users:
@@ -332,8 +335,7 @@ def plan_rename_footprint(
         plan.note("no symbol in this library referenced that footprint")
 
     ws.emit(plan)
-    if prov is not None:
-        prov.rename(category, KIND_FOOTPRINT, old, final_name)
+    plan.rename_provenance(category, KIND_FOOTPRINT, old, final_name)
     plan.warn(_break_warning("footprint", f"{category}:{old}", f"{category}:{final_name}"))
     return plan
 
@@ -349,7 +351,6 @@ def plan_rename_model(
     new: str,
     *,
     conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
-    prov: Optional[pv.Provenance] = None,
     lib: Optional[lb.Library] = None,
 ) -> ops.Plan:
     """Rename a model file and repoint every footprint that uses it."""
@@ -381,8 +382,7 @@ def plan_rename_model(
         plan.note("no footprint referenced that model")
 
     ws.emit(plan)
-    if prov is not None:
-        prov.rename(category, KIND_MODEL, old, target.name)
+    plan.rename_provenance(category, KIND_MODEL, old, target.name)
     return plan
 
 
@@ -398,7 +398,6 @@ def plan_move(
     new_category: str,
     *,
     conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
-    prov: Optional[pv.Provenance] = None,
     lib: Optional[lb.Library] = None,
 ) -> ops.Plan:
     """
@@ -446,8 +445,9 @@ def plan_move(
                 f"A derived symbol's parent must be a sibling file in the same "
                 f"symdir, so move '{sym.extends}' as well or the symbol will not load."
             )
-        if prov is not None:
-            prov.rename(category, KIND_SYMBOL, name, target.stem, new_category=new_category)
+        plan.rename_provenance(
+            category, KIND_SYMBOL, name, target.stem, new_category=new_category
+        )
 
     elif kind == KIND_FOOTPRINT:
         fp = lib.find_footprint(category, name)
@@ -472,8 +472,9 @@ def plan_move(
                     f"footprint '{name}' still points at its model in the old "
                     f"category ({raw}); move the model too, or the 3D view breaks"
                 )
-        if prov is not None:
-            prov.rename(category, KIND_FOOTPRINT, name, target.stem, new_category=new_category)
+        plan.rename_provenance(
+            category, KIND_FOOTPRINT, name, target.stem, new_category=new_category
+        )
 
     elif kind == KIND_MODEL:
         model = lib.find_model(category, name)
@@ -491,8 +492,9 @@ def plan_move(
             f"repointed {len(users)} footprint(s): " + ", ".join(users)
             if users else "no footprint referenced that model"
         )
-        if prov is not None:
-            prov.rename(category, KIND_MODEL, name, target.name, new_category=new_category)
+        plan.rename_provenance(
+            category, KIND_MODEL, name, target.name, new_category=new_category
+        )
 
     else:
         raise RefactorError(f"unknown kind {kind!r}; expected symbol, footprint or model")
@@ -514,7 +516,6 @@ def plan_rename_category(
     new: str,
     *,
     conflict: ops.ConflictPolicy = ops.ConflictPolicy.SKIP,
-    prov: Optional[pv.Provenance] = None,
     lib: Optional[lb.Library] = None,
 ) -> ops.Plan:
     """
@@ -565,8 +566,7 @@ def plan_rename_category(
     ws.emit(plan)
     _cleanup_empty_dirs(plan, root, old)
 
-    if prov is not None:
-        prov.rename_category(old, new)
+    plan.rename_provenance_category(old, new)
 
     plan.note(f"rewrote {ref_count} cross-reference(s)")
     plan.warn(_break_warning("library", old, new))
