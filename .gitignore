@@ -25,3 +25,13 @@ fp-info-cache
 .directory
 .DS_Store
 Thumbs.db
+
+# Test & tooling caches
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local-only library manager state (never shared between machines)
+provenance.json.bak
+manifest.json.bak
+scripts/.gui_state.json

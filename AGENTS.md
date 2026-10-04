@@ -92,8 +92,13 @@ This extracts *only* the used custom components into a self-contained `${KIPRJMO
 ## 4. Component Naming Conventions
 
 - **Categories**: Use manufacturer or functional domain: `<Vendor>-<Family>` or `<Function>_<Subtype>`
-  - *Good*: `TI-TPAxxx_AUDIO-AMP`, `MCU_RaspberryPi`, `Passives_Inductors_Sagami`, `Connector_XT`
-  - *Bad*: `mylib`, `temp`, `new_parts`
+  - *Good*: `TI-TPAxxx_AUDIO-AMP`, `Passives_Inductors_Sagami`, `Connector_XT`
+  - *Bad*: `mylib`, `temp`, `new_parts`, `3255` (meaningless on its own)
+  - *Bad — collides with an official KiCad library*: `MCU_RaspberryPi`, `Connector`,
+    `Audio`, `Amplifier_Audio`. A colliding nickname makes `lib_id` resolution
+    depend on global-table order, which differs per machine. See §6.5; prefix
+    personal categories if in doubt (`AX_MCU_RaspberryPi`).
+  - Allowed characters: letters, digits, `_`, `-`, `.`, `+` (§6.1).
 - **Symbols**: Use exact manufacturer part number: `TPA3255DDV.kicad_sym`, `RP2040.kicad_sym`
 - **Footprints**: Use IPC-7351 standard names or manufacturer package names: `SOP63P810X120-44N.kicad_mod`, `JST_B4B-ZR_LF__SN_.kicad_mod`
 - **3D Models**: Match part name or package name with lowercase extension: `TPA3255DDV.step`, `7W15-SAGAMI.step`
@@ -104,3 +109,89 @@ This extracts *only* the used custom components into a self-contained `${KIPRJMO
 If the `konnect` MCP server is active:
 - Route schematic queries and placement commands through Konnect MCP tools (`sch_components`, `sch_wiring`).
 - Do not bypass Konnect to directly inject raw text into active `.kicad_sch` or `.kicad_pcb` design files during live project sessions.
+
+---
+
+## 6. KiCad 10 on-disk facts (verified, do not re-derive)
+
+Measured against **KiCad 10.0.6** on this machine: all 22 784 files in
+`/usr/share/kicad/symbols/*.kicad_symdir/`, plus `kicad-cli` behaviour probes.
+These are encoded as tests in `tests/test_kicad_conventions.py`, which skip
+when KiCad is not installed. **Re-run those tests rather than re-measuring.**
+
+### 6.1 Symbol library layout
+| Fact | Measurement |
+|---|---|
+| A symbol library is a **directory** `<Nick>.kicad_symdir` | 224 directories, 0 loose `.kicad_sym` at the symbols root |
+| **Exactly one top-level `(symbol …)` per file** | 22 784 / 22 784. No exceptions. |
+| Internal symbol name == filename stem | 22 783 / 22 784 |
+| …the single exception | `Interface_USB.kicad_symdir/tusb564.kicad_sym` declares `(symbol "TUSB564")` — a **case-only** difference |
+| Filename character set | alphanumerics plus `+ - . _` only |
+
+**Consequences for tooling:**
+- A multi-symbol `.kicad_sym` (vendor bundle, or a project cache library) MUST be
+  **split into one file per symbol** on ingest. Keeping it whole produces a file
+  unlike anything KiCad ships. Name each file after its internal symbol name.
+- Compare filename stem to internal name **case-insensitively**. An exact-match
+  assumption rejects a file KiCad itself ships. A case-only difference is a
+  warning, never an error.
+- `naming.py`'s allowed set (`A-Za-z0-9_-.+`) is a superset of what the official
+  libraries use, so it can never reject a legitimate KiCad name.
+
+### 6.2 Derived symbols (`extends`) — cross-file, not in-file
+Of 12 249 derived symbols in the official libraries:
+- **0** have their parent defined in the same file.
+- **0** reference a parent outside their own `.kicad_symdir`.
+
+So `(extends "PARENT")` **always** names a *sibling file* in the same symdir:
+```
+Diode_Bridge.kicad_symdir/B40R.kicad_sym      <- parent, full definition
+Diode_Bridge.kicad_symdir/B250R.kicad_sym     <- (extends "B40R"), properties only
+```
+**Consequence:** renaming or moving a symbol must scan **every sibling file in
+the symdir** for `(extends "<old>")`. An in-file-only rewrite silently breaks
+derived symbols. Moving a symbol out of a symdir breaks any sibling that
+extends it — detect and refuse, or move the whole family.
+
+### 6.3 Unit sub-symbols
+Nested one level below the top-level symbol and named `<Parent>_<unit>_<style>`:
+```
+(symbol "LM358"            ->  (symbol "LM358_0_1"
+                               (symbol "LM358_1_1"
+```
+**Consequence:** `rename_symbol` is a multi-site edit — the top-level name, every
+`_<unit>_<style>` child, the `Value` property when it equals the old name, the
+filename, and sibling `extends` references.
+
+### 6.4 `kicad-cli` as a validator — asymmetric, read carefully
+| Command | Corrupt input | Good input | Verdict |
+|---|---|---|---|
+| `fp export svg -o <dir> <lib.pretty>` | exit **2** | exit 0 + one SVG per footprint | **Trustworthy** by exit code |
+| `sym export svg -o <dir> <lib.kicad_symdir>` | exit **0**, writes nothing | exit 0 + one SVG per unit | **NOT trustworthy** by exit code |
+| `sym upgrade <lib.kicad_symdir>` | exit **2** | exit 0 | Trustworthy, but **rewrites files in place** |
+
+**Consequences for `check.py`:**
+- Footprints: use `fp export svg`, exit code is the signal. The output directory
+  must already exist — `kicad-cli` will not create it and reports
+  `Error creating svg file` while still exiting 0.
+- Symbols: either compare the produced SVG count against the expected symbol
+  count, or run `sym upgrade` **on a throwaway copy**. Never run `sym upgrade`
+  against the real library.
+- `kicad-cli` remains optional; skip these checks silently when it is absent.
+
+### 6.5 Nickname collisions with official libraries
+224 official symbol nicknames, 155 footprint nicknames. Checked examples:
+
+| Candidate | Collides? |
+|---|---|
+| `MCU_RaspberryPi` | **YES** — official symbol library |
+| `Connector`, `Audio`, `Amplifier_Audio` | **YES** |
+| `Connector_XT`, `TI-TPAxxx_AUDIO-AMP`, `Passives_Inductors_Sagami` | no |
+
+A colliding nickname makes `lib_id` resolution depend on global-table ordering,
+which differs between machines. Validate new category names against
+`$KICAD10_SYMBOL_DIR` / `$KICAD10_FOOTPRINT_DIR`, falling back to
+`/usr/share/kicad/{symbols,footprints}`, and warn on collision.
+
+> The §4 example `MCU_RaspberryPi` in this document is therefore a **bad**
+> example. Prefer a personal prefix, e.g. `AX_MCU_RaspberryPi`.

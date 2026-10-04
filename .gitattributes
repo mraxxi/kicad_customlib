@@ -1,0 +1,27 @@
+# Normalize everything to LF in the repo and on checkout.
+# Both machines (Arch + Windows/macOS) must see identical bytes, otherwise
+# every pull shows phantom whole-file diffs on the generated tables.
+* text=auto eol=lf
+
+# --- KiCad text sources: always LF, never CRLF ---------------------------
+*.kicad_sym   text eol=lf
+*.kicad_mod   text eol=lf
+*.kicad_sch   text eol=lf
+*.kicad_pcb   text eol=lf
+*.kicad_pro   text eol=lf
+*.kicad_wks   text eol=lf
+sym-lib-table text eol=lf
+fp-lib-table  text eol=lf
+provenance.json text eol=lf
+
+# --- 3D models: treat as binary -----------------------------------------
+# STEP is nominally ASCII and vendors ship it with CRLF (the TPA3255DDV.step
+# in staging is 1.6 MB of CRLF). Normalizing would rewrite the whole file on
+# every checkout and churn megabytes through git for no benefit, and KiCad
+# does not care about the line endings. Same reasoning for VRML.
+*.step binary
+*.stp  binary
+*.STEP binary
+*.STP  binary
+*.wrl  binary
+*.WRL  binary
